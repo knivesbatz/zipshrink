@@ -64,7 +64,7 @@ jobs:
           Z=target/release/zipshrink
           mkdir -p rt/src/a/b rt/src/empty
           head -c 5000000 /dev/urandom > rt/src/a/random.bin
-          yes "some text" | head -c 3000000 > rt/src/a/b/text.txt
+          head -c 3000000 < <(yes "some text") > rt/src/a/b/text.txt  # no pipe: `yes` would die of SIGPIPE under pipefail
           echo "unicode ü 日本" > "rt/src/a/ünï.txt"
           (cd rt && find src -type f -exec sha256sum {} + | sort -k2) > rt/before.sha
           $Z create rt/src -o rt/out.zip --delete-originals --yes --min-free 16M --parts 2
