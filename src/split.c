@@ -1,7 +1,11 @@
-/* Splitting one selection into several complete, independent ZIP files.
- * Files are assigned in plan order, cut where the running total reaches
- * k/N of the data while every later part keeps at least one file; a file is
- * never cut in two. Each part repeats the folder entries above its files. */
+/* Splitting one selection into several complete, independent ZIP files,
+ * either into N parts or into parts of a given size. Files are assigned in
+ * plan order and a file is never cut in two. Each part repeats the folder
+ * entries above its files.
+ *   N parts: cut where the running total reaches k/N of the data while every
+ *            later part keeps at least one file.
+ *   size:    start a new part when the next file would take the current
+ *            part's estimated size over the limit. */
 #include "engine.h"
 
 char *part_path(const char *output, int number, int parts) {
@@ -58,28 +62,15 @@ static long dir_index_find(const DirIndex *ix, const Scan *s, const char *name, 
     return -1;
 }
 
-int split_scan(const Scan *s, const char *output, int parts, u32 ratio, Part **out, char **err) {
-    size_t i, files = 0, seen = 0, in_part = 0;
-    int part = 0, k;
-    int *assign;
+static u64 entry_overhead(size_t name_len) { return 2 * (u64)name_len + 230; }
+
+/* Parts from a per-entry part number (files set; folders filled in here). */
+static void build_parts(const Scan *s, const char *output, int parts, int *assign, u32 ratio, Part **out) {
+    size_t i;
+    int k;
     u8 **member;
-    u64 acc = 0, total = s->bytes ? s->bytes : 1;
     Part *v;
-    if (parts < 2 || parts > 999) return *err = zs_strdup("a split needs 2 to 999 parts"), 0;
-    for (i = 0; i < s->n; i++)
-        if (!s->e[i].is_dir) files++;
-    if (files < (size_t)parts) return *err = zs_fmt("the selection has %u files, so it cannot be split into %d parts", (unsigned)files, parts), 0;
-    assign = zs_zalloc(s->n * sizeof(int));
-    for (i = 0; i < s->n; i++) {
-        if (!s->e[i].is_dir) {
-            size_t remaining = files - seen; /* including this one */
-            u64 boundary = total / (u64)parts * (u64)(part + 1) + total % (u64)parts * (u64)(part + 1) / (u64)parts;
-            int must_cut = remaining <= (size_t)(parts - part - 1);
-            if (part + 1 < parts && in_part > 0 && (acc >= boundary || must_cut)) part++, in_part = 0;
-            acc += s->e[i].size, seen++, in_part++;
-        }
-        assign[i] = part;
-    }
+    DirIndex ix;
     /* A folder goes with the next file after it. */
     {
         int next = parts - 1;
@@ -88,7 +79,6 @@ int split_scan(const Scan *s, const char *output, int parts, u32 ratio, Part **o
             else next = assign[i];
         }
     }
-    DirIndex ix;
     dir_index_build(&ix, s);
     member = zs_alloc((size_t)parts * sizeof(u8 *));
     for (k = 0; k < parts; k++) member[k] = zs_zalloc(s->n);
@@ -124,7 +114,7 @@ int split_scan(const Scan *s, const char *output, int parts, u32 ratio, Part **o
         for (i = 0; i < s->n; i++) {
             if (!member[k][i]) continue;
             scan_add(&pt->scan, &s->e[i]);
-            ovh += 2 * strlen(s->e[i].name) + 230;
+            ovh += entry_overhead(strlen(s->e[i].name));
             if (s->e[i].is_dir) pt->scan.dirs++;
             else {
                 pt->scan.files++, pt->scan.bytes += s->e[i].size;
@@ -137,9 +127,70 @@ int split_scan(const Scan *s, const char *output, int parts, u32 ratio, Part **o
         zs_free(member[k]);
     }
     zs_free(member);
-    zs_free(assign);
     zs_free(ix.slot);
     *out = v;
+}
+
+int split_scan(const Scan *s, const char *output, int parts, u32 ratio, Part **out, char **err) {
+    size_t i, files = 0, seen = 0, in_part = 0;
+    int part = 0;
+    int *assign;
+    u64 acc = 0, total = s->bytes ? s->bytes : 1;
+    if (parts < 2 || parts > ZS_MAX_PARTS) return *err = zs_fmt("a split needs 2 to %d parts", ZS_MAX_PARTS), 0;
+    for (i = 0; i < s->n; i++)
+        if (!s->e[i].is_dir) files++;
+    if (files < (size_t)parts) return *err = zs_fmt("the selection has %u files, so it cannot be split into %d parts", (unsigned)files, parts), 0;
+    assign = zs_zalloc(s->n * sizeof(int));
+    for (i = 0; i < s->n; i++) {
+        if (!s->e[i].is_dir) {
+            size_t remaining = files - seen; /* including this one */
+            u64 boundary = total / (u64)parts * (u64)(part + 1) + total % (u64)parts * (u64)(part + 1) / (u64)parts;
+            int must_cut = remaining <= (size_t)(parts - part - 1);
+            if (part + 1 < parts && in_part > 0 && (acc >= boundary || must_cut)) part++, in_part = 0;
+            acc += s->e[i].size, seen++, in_part++;
+        }
+        assign[i] = part;
+    }
+    build_parts(s, output, parts, assign, ratio, out);
+    zs_free(assign);
+    return 1;
+}
+
+int split_scan_size(const Scan *s, const char *output, u64 size, u32 ratio, Part **out, int *nparts, char **err) {
+    size_t i, in_part = 0;
+    int part = 0;
+    int *assign;
+    u64 cur = 200;
+    *out = NULL, *nparts = 1;
+    if (size < ZS_MIN_PART_SIZE) return *err = zs_strdup("the size of each ZIP file should be at least 64 KB"), 0;
+    assign = zs_zalloc(s->n * sizeof(int));
+    for (i = 0; i < s->n; i++) {
+        const char *name = s->e[i].name;
+        size_t len = strlen(name);
+        u64 add = entry_overhead(len);
+        if (!s->e[i].is_dir) {
+            add += est(s->e[i].size, ratio);
+            if (in_part > 0 && cur + add > size) {
+                size_t cut;
+                if (++part >= ZS_MAX_PARTS) {
+                    zs_free(assign);
+                    return *err = zs_fmt("this would make more than %d ZIP files; choose a larger size", ZS_MAX_PARTS), 0;
+                }
+                in_part = 0, cur = 200;
+                /* The new part repeats the folders above this file. */
+                for (cut = len; cut > 0; cut--)
+                    if (name[cut - 1] == '/') cur += entry_overhead(cut);
+            }
+            in_part++;
+        }
+        cur += add;
+        assign[i] = part;
+    }
+    if (part > 0) {
+        *nparts = part + 1;
+        build_parts(s, output, *nparts, assign, ratio, out);
+    }
+    zs_free(assign);
     return 1;
 }
 

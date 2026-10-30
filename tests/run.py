@@ -348,6 +348,51 @@ def split_parts(c):
 
 
 @test
+def split_by_size(c):
+    rnd = random.Random(14)
+    src = c.path("src")
+    os.makedirs(os.path.join(src, "d"))
+    for i in range(20):
+        with open(os.path.join(src, "d", f"f{i:02}.bin"), "wb") as f:
+            f.write(rnd.randbytes(100_000))
+    with open(os.path.join(src, "big.bin"), "wb") as f:
+        f.write(rnd.randbytes(600_000))
+    files, _ = snapshot(src)
+    _, out, _ = zs("check", "src", "-o", "out.zip", "--part-size", "256K", cwd=c.dir, expect=EX_OK)
+    check("out.part01.zip" in out and "out.part11.zip" in out, "check does not preview 11 parts")
+    check("never cut in two" in out, "check does not explain the part holding the large file")
+    zs("create", "src", "-o", "out.zip", "-s", "256K", "--delete-originals", "-y", cwd=c.dir, expect=EX_OK)
+    parts = sorted(n for n in os.listdir(c.dir) if n.startswith("out.part") and n.endswith(".zip"))
+    check(len(parts) == 11, f"expected 11 parts, got {parts}")
+    union = {}
+    for name in parts:
+        got, _ = zip_contents(c.path(name))
+        check(got, f"{name} is empty")
+        size = os.path.getsize(c.path(name))
+        if len(got) > 1:
+            check(size <= 256 * 1024 * 1.02, f"{name} is {size} bytes, over the 256K asked for")
+        for n in got:
+            check(n not in union, f"{n} is in more than one part")
+        union.update(got)
+        zs("verify", name, cwd=c.dir, expect=EX_OK)
+    check(union == files, "the parts together do not hold exactly the originals")
+    check(not os.path.exists(c.path("src")), "originals were left")
+
+
+@test
+def split_by_size_fits_in_one(c):
+    make_tree(c.path("src"), seed=15, many=5)
+    files, dirs = snapshot(c.path("src"))
+    _, out, _ = zs("create", "src", "-o", "out.zip", "--part-size", "100M", cwd=c.dir, expect=EX_OK)
+    check("not split" in out, "does not say that no split was needed")
+    expect_zip(c.path("out.zip"), files, dirs)
+    check(not any(n.startswith("out.part") for n in os.listdir(c.dir)), "made parts although everything fits in one")
+    zs("check", "src", "-o", "x.zip", "--parts", "2", "--part-size", "1M", cwd=c.dir, expect=EX_USAGE)
+    zs("check", "src", "-o", "x.zip", "--part-size", "10K", cwd=c.dir, expect=EX_USAGE)
+    zs("check", "src", "-o", "x.zip", "--part-size", "lots", cwd=c.dir, expect=EX_USAGE)
+
+
+@test
 def split_crash_and_resume(c):
     make_tree(c.path("src"), seed=12, many=40)
     files, _ = snapshot(c.path("src"))
