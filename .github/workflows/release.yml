@@ -75,4 +75,10 @@ jobs:
           cd artifacts
           sha256sum * > SHA256SUMS
           cat SHA256SUMS
-          gh release create "$tag" * --repo "$GITHUB_REPOSITORY" --title "ZipShrink ${tag#v}" --generate-notes --verify-tag
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # A release made in the web UI: attach the files to it.
+            gh release upload "$tag" * --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            # Creates the tag at the built commit when run by hand.
+            gh release create "$tag" * --repo "$GITHUB_REPOSITORY" --title "ZipShrink ${tag#v}" --generate-notes --target "$GITHUB_SHA"
+          fi
