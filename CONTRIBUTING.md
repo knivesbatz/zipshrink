@@ -6,18 +6,22 @@ recoverability come before features and speed**.
 * Read [docs/DATA_SAFETY.md](docs/DATA_SAFETY.md) and
   [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) first.
 * Any change to compression, verification, the journal, deletion or recovery
-  needs tests, including fault-injection or crash tests where a new failure
-  point is introduced (see `crates/zipshrink-core/src/failpoint.rs`).
+  needs tests, including crash tests where a new failure point is introduced
+  (`zs_fail("name")` in the code, listed in `FAILPOINTS` in `tests/run.py`).
 * Tests must check contents by SHA-256, never just that an archive opens.
-* Run before opening a pull request:
+* Keep Windows 95 working: no C runtime functions, and any Windows function
+  newer than Windows 95 (or any "W" function) must be looked up with
+  `zs_proc()` and used only when present. `make check-imports` enforces this.
+* Run before opening a pull request (on Linux this needs 32-bit Wine):
 
   ```
-  cargo fmt --all
-  cargo clippy --workspace --all-targets --features zipshrink-core/failpoints,zipshrink-cli/failpoints -- -D warnings
-  cargo test --workspace --features zipshrink-core/failpoints,zipshrink-cli/failpoints
+  make
+  make check-imports
+  make test
   ```
 
-* New dependencies must have a permissive license (`scripts/third_party.py`
-  enforces an allow list) and be actively maintained.
+  and, if you can, the suite in Windows 95 mode (see docs/BUILDING.md).
+* New third-party code must have a permissive license and be listed in
+  THIRD_PARTY_LICENSES.md.
 
 By contributing you agree that your work is released under the MIT License.
