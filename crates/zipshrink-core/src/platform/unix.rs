@@ -86,12 +86,18 @@ pub fn sync_file(f: &File) -> io::Result<()> {
 }
 
 pub fn sync_dir(dir: &Path) -> io::Result<()> {
+    use std::os::fd::AsRawFd;
     let d = File::open(dir)?;
-    match d.sync_all() {
-        Ok(()) => Ok(()),
-        // Some filesystems (and FUSE mounts) refuse fsync on directories.
-        Err(e) if e.raw_os_error() == Some(libc::EINVAL) || e.raw_os_error() == Some(libc::ENOTSUP) => Ok(()),
-        Err(e) => Err(e),
+    // Plain fsync: std's sync_all uses F_FULLFSYNC on macOS, which APFS
+    // rejects for directories.
+    if unsafe { libc::fsync(d.as_raw_fd()) } == 0 {
+        return Ok(());
+    }
+    let e = io::Error::last_os_error();
+    match e.raw_os_error() {
+        // Some filesystems (and FUSE mounts) do not support syncing directories.
+        Some(c) if c == libc::EINVAL || c == libc::ENOTSUP || c == libc::ENOTTY || c == libc::EBADF || c == libc::EROFS => Ok(()),
+        _ => Err(e),
     }
 }
 
