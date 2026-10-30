@@ -72,13 +72,11 @@ jobs:
           $Z verify rt/out.part1.zip
           $Z verify rt/out.part2.zip
           mkdir rt/x
-          if command -v 7z >/dev/null; then
-            7z t rt/out.part1.zip && 7z t rt/out.part2.zip
-            7z x -ort/x rt/out.part1.zip && 7z x -aoa -ort/x rt/out.part2.zip
-          else
-            unzip -t rt/out.part1.zip && unzip -t rt/out.part2.zip
-            unzip -o -d rt/x rt/out.part1.zip && unzip -o -d rt/x rt/out.part2.zip
-          fi
+          # 7-Zip checks integrity where installed; Python's zipfile (UTF-8
+          # aware on every platform) extracts.
+          if command -v 7z >/dev/null; then 7z t rt/out.part1.zip; 7z t rt/out.part2.zip; fi
+          PY=$(command -v python3 || command -v python)
+          "$PY" -c "import sys, zipfile; [zipfile.ZipFile(p).extractall(sys.argv[1]) for p in sys.argv[2:]]" rt/x rt/out.part1.zip rt/out.part2.zip
           (cd rt/x && find src -type f -exec sha256sum {} + | sort -k2) | diff - rt/before.sha
 
   windows-packages:
