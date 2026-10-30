@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  FEATURES: zipshrink-core/failpoints,zipshrink-cli/failpoints
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libxkbcommon-dev
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --features "$FEATURES" -- -D warnings
+      - name: Dependency licenses
+        run: python3 scripts/third_party.py && git diff --exit-code THIRD_PARTY_LICENSES.md
+
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libxkbcommon-dev
+      - uses: Swatinem/rust-cache@v2
+      - name: Unit, integration, fault-injection and crash tests
+        run: cargo test --workspace --locked --features ${{ env.FEATURES }}
+      - name: Release build
+        run: cargo build --release --locked -p zipshrink-cli -p zipshrink-gui
+      - name: Round trip with deletion, checked by a third-party tool
+        shell: bash
+        run: |
+          set -euxo pipefail
+          Z=target/release/zipshrink
+          mkdir -p rt/src/a/b rt/src/empty
+          head -c 5000000 /dev/urandom > rt/src/a/random.bin
+          yes "some text" | head -c 3000000 > rt/src/a/b/text.txt
+          echo "unicode ü 日本" > "rt/src/a/ünï.txt"
+          (cd rt && find src -type f -exec sha256sum {} + | sort -k2) > rt/before.sha
+          $Z create rt/src -o rt/out.zip --delete-originals --yes --min-free 16M --parts 2
+          test ! -e rt/src
+          $Z verify rt/out.part1.zip
+          $Z verify rt/out.part2.zip
+          mkdir rt/x
+          if command -v 7z >/dev/null; then
+            7z t rt/out.part1.zip && 7z t rt/out.part2.zip
+            7z x -ort/x rt/out.part1.zip && 7z x -aoa -ort/x rt/out.part2.zip
+          else
+            unzip -t rt/out.part1.zip && unzip -t rt/out.part2.zip
+            unzip -o -d rt/x rt/out.part1.zip && unzip -o -d rt/x rt/out.part2.zip
+          fi
+          (cd rt/x && find src -type f -exec sha256sum {} + | sort -k2) | diff - rt/before.sha
+
+  windows-packages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      - run: sudo apt-get update && sudo apt-get install -y mingw-w64 nsis wixl zip
+      - uses: Swatinem/rust-cache@v2
+      - run: packaging/build-windows.sh
+        env:
+          ZIPSHRINK_UPDATE_REPO: ${{ github.repository }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-packages
+          path: dist/
+
+  windows-install:
+    needs: windows-packages
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-packages
+          path: dist
+      - name: Setup installs, runs and uninstalls silently
+        shell: pwsh
+        run: |
+          $p = Start-Process dist\ZipShrink-x64-setup.exe -ArgumentList '/S' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "setup failed: $($p.ExitCode)" }
+          $dir = "$env:LOCALAPPDATA\Programs\ZipShrink"
+          & "$dir\zipshrink.exe" --version
+          if (-not (Test-Path "$dir\zipshrink-gui.exe")) { throw "gui missing" }
+          $p = Start-Process "$dir\Uninstall.exe" -ArgumentList '/S',"_?=$dir" -Wait -PassThru
+          Start-Sleep -Seconds 3
+          if (Test-Path "$dir\zipshrink.exe") { throw "uninstall left files" }
+      - name: MSI installs and uninstalls silently
+        shell: pwsh
+        run: |
+          $p = Start-Process msiexec -ArgumentList '/i','dist\ZipShrink-x64.msi','/qn','/l*v','msi.log' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content msi.log -Tail 50; throw "msi failed: $($p.ExitCode)" }
+          & "$env:ProgramFiles\ZipShrink\zipshrink.exe" --version
+          $p = Start-Process msiexec -ArgumentList '/x','dist\ZipShrink-x64.msi','/qn' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msi uninstall failed: $($p.ExitCode)" }
