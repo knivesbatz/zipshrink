@@ -209,6 +209,37 @@ static void test_split(void) {
     parts_free(parts, 4);
     CHECK(!split_scan(&s, "C:\\out.zip", 31, 500, &parts, &e));
     zs_free(e);
+    /* By size (files of 40-84 KB): every part's estimate stays within the
+     * size, except a part holding one file that is larger on its own. */
+    for (i = 0; i < 30; i++) s.e[i].size *= 40;
+    total *= 40;
+    {
+        int n = 0, alone = 0;
+        u64 sum = 0;
+        CHECK(split_scan_size(&s, "C:\\out.zip", 200000, 1000, &parts, &n, &e));
+        CHECK(n >= 10 && n <= 15);
+        for (k = 0; k < n; k++) {
+            CHECK(parts[k].estimated <= 200000);
+            CHECK(parts[k].files > 0);
+            sum += parts[k].bytes;
+        }
+        CHECK(sum == total);
+        parts_free(parts, n);
+        CHECK(split_scan_size(&s, "C:\\out.zip", 70000, 1000, &parts, &n, &e));
+        CHECK(n == 30);
+        for (k = 0; k < n; k++)
+            if (parts[k].estimated > 70000) {
+                alone++;
+                CHECK(parts[k].files == 1);
+            }
+        CHECK(alone > 0);
+        parts_free(parts, n);
+        /* Everything fits in one: no split. */
+        CHECK(split_scan_size(&s, "C:\\out.zip", 100000000, 1000, &parts, &n, &e));
+        CHECK(n == 1 && parts == NULL);
+        CHECK(!split_scan_size(&s, "C:\\out.zip", 1000, 1000, &parts, &n, &e));
+        zs_free(e);
+    }
     scan_free(&s);
     {
         char *p = part_path("C:\\a\\b.zip", 7, 12);

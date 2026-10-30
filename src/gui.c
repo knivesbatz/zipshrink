@@ -40,8 +40,10 @@ enum {
     ID_L_LEVEL,
     ID_LEVEL,
     ID_L_PARTS,
+    ID_SPLIT,
     ID_PARTS,
     ID_PARTS_UD,
+    ID_PART_SIZE,
     ID_PARTS_NOTE,
     ID_L_FREE,
     ID_FREE,
@@ -112,6 +114,7 @@ typedef struct {
     char *output;
     Options o;
     int parts;
+    u64 part_size;
     /* results */
     int ok;
     char *error;
@@ -230,12 +233,29 @@ static void show_free_space(const char *dir) {
     }
 }
 
+enum { SPLIT_NONE, SPLIT_COUNT, SPLIT_SIZE };
+
+static int split_mode(void) {
+    int m = (int)uw_send(C(ID_SPLIT), CB_GETCURSEL, 0, 0);
+    return m == SPLIT_COUNT || m == SPLIT_SIZE ? m : SPLIT_NONE;
+}
+
+/* The count box or the size box, whichever the "Split" choice needs. */
+static void split_controls(void) {
+    int m = split_mode(), setup = A.page == P_SETUP;
+    ShowWindow(C(ID_PARTS), setup && m == SPLIT_COUNT ? SW_SHOW : SW_HIDE);
+    ShowWindow(C(ID_PARTS_UD), setup && m == SPLIT_COUNT ? SW_SHOW : SW_HIDE);
+    ShowWindow(C(ID_PART_SIZE), setup && m == SPLIT_SIZE ? SW_SHOW : SW_HIDE);
+    set(ID_PARTS_NOTE, m == SPLIT_COUNT ? "ZIP files" : m == SPLIT_SIZE ? "each" : "");
+}
+
 static void show_page(int page) {
     int id;
     A.page = page;
     for (id = 1; id < ID_LAST; id++)
         if (A.c[id] && A.page_of[id]) ShowWindow(A.c[id], (A.page_of[id] & page) ? SW_SHOW : SW_HIDE);
     for (id = Y2K_LCD; id <= Y2K_LEDS; id++) ShowWindow(GetDlgItem(A.w, Y2K_ID(id)), page == P_RUN ? SW_SHOW : SW_HIDE);
+    split_controls();
     InvalidateRect(A.w, NULL, TRUE);
 }
 
@@ -277,13 +297,19 @@ static void build(void) {
     cb_add(h, "Maximum");
     uw_send(h, CB_SETCURSEL, 2, 0);
     y += 25;
-    label(P_SETUP, "Split into:", 402, y + 3, 66, 14, ID_L_PARTS);
-    ctl(P_SETUP, "EDIT", "1", ES_NUMBER | WS_TABSTOP, WS_EX_CLIENTEDGE, 470, y, 44, 21, ID_PARTS);
+    label(P_SETUP, "Split:", 402, y + 3, 66, 14, ID_L_PARTS);
+    h = ctl(P_SETUP, "COMBOBOX", "", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 0, 470, y, 150, 120, ID_SPLIT);
+    cb_add(h, "Don't split");
+    cb_add(h, "Into a number of files");
+    cb_add(h, "Into files of a size");
+    uw_send(h, CB_SETCURSEL, SPLIT_NONE, 0);
+    ctl(P_SETUP, "EDIT", "2", ES_NUMBER | WS_TABSTOP, WS_EX_CLIENTEDGE, 626, y, 52, 21, ID_PARTS);
     h = ctl(P_SETUP, UPDOWN_CLASSA, "", UDS_SETBUDDYINT | UDS_ALIGNRIGHT | UDS_ARROWKEYS | UDS_NOTHOUSANDS, 0, 0, 0, 0, 0, ID_PARTS_UD);
     uw_send(h, UDM_SETBUDDY, (WPARAM)C(ID_PARTS), 0);
-    uw_send(h, UDM_SETRANGE, 0, MAKELPARAM(999, 1));
-    uw_send(h, UDM_SETPOS, 0, MAKELPARAM(1, 0));
-    label(P_SETUP, "ZIP file", 520, y + 3, 240, 14, ID_PARTS_NOTE);
+    uw_send(h, UDM_SETRANGE, 0, MAKELPARAM(ZS_MAX_PARTS, 2));
+    uw_send(h, UDM_SETPOS, 0, MAKELPARAM(2, 0));
+    ctl(P_SETUP, "EDIT", "650 MB", ES_AUTOHSCROLL | WS_TABSTOP, WS_EX_CLIENTEDGE, 626, y, 70, 21, ID_PART_SIZE);
+    label(P_SETUP, "", 702, y + 3, 58, 14, ID_PARTS_NOTE);
     y += 25;
     label(P_SETUP, "Keep free:", 402, y + 3, 66, 14, ID_L_FREE);
     ctl(P_SETUP, "EDIT", "256 MB", ES_AUTOHSCROLL | WS_TABSTOP, WS_EX_CLIENTEDGE, 470, y, 70, 21, ID_FREE);
@@ -306,12 +332,12 @@ static void build(void) {
     }
     h = ctl(P_SETUP, PROGRESS_CLASSA, "", 0, 0, 18, 404, 362, 14, ID_SPACE_BAR);
     uw_send(h, PBM_SETRANGE, 0, MAKELPARAM(0, 1000));
-    label(P_SETUP, "Add files or folders to see whether the archive will fit.", 18, 422, 362, 32, ID_VERDICT);
+    label(P_SETUP, "Add files or folders to see whether the archive will fit.", 18, 420, 362, 39, ID_VERDICT);
     label(P_SETUP, "", 392, 326, 368, 14, ID_PARTS_TITLE);
     bold(ID_PARTS_TITLE);
     h = ctl(P_SETUP, WC_LISTVIEWA, "", LVS_REPORT | LVS_NOSORTHEADER | WS_BORDER | WS_TABSTOP, WS_EX_CLIENTEDGE, 392, 342, 368, 110, ID_PARTS_LIST);
-    lv_column(h, 0, "Name", 128, 0);
-    lv_column(h, 1, "Files", 44, 1);
+    lv_column(h, 0, "Name", 112, 0);
+    lv_column(h, 1, "Files", 42, 1);
     lv_column(h, 2, "Data", 60, 1);
     lv_column(h, 3, "Estimated", 64, 1);
     lv_column(h, 4, "At most", 60, 1);
@@ -449,12 +475,26 @@ static int level_of(int sel) {
 }
 
 static int parts_value(void) {
-    char *t = get(ID_PARTS);
-    u64 v = 1;
-    if (!zs_parse_u64(t, &v) || v < 1) v = 1;
-    if (v > 999) v = 999;
+    char *t;
+    u64 v = 2;
+    if (split_mode() != SPLIT_COUNT) return 1;
+    t = get(ID_PARTS);
+    if (!zs_parse_u64(t, &v) || v < 2) v = 2;
+    if (v > ZS_MAX_PARTS) v = ZS_MAX_PARTS;
     zs_free(t);
     return (int)v;
+}
+
+/* The size of each part in "Into files of a size" mode, 0 otherwise or
+ * (with *why) when the box does not hold a usable size. */
+static u64 part_size_value(const char **why) {
+    char *t;
+    u64 v = 0;
+    if (split_mode() != SPLIT_SIZE) return 0;
+    t = get(ID_PART_SIZE);
+    if (!zs_parse_size(t, &v) || v < ZS_MIN_PART_SIZE) *why = "The size of each ZIP file should be a size such as 650 MB or 2 GB (at least 64 KB).", v = 0;
+    zs_free(t);
+    return v;
 }
 
 /* The output path from the two boxes; NULL with *why when unusable. */
@@ -513,6 +553,8 @@ static DWORD WINAPI pf_thread(void *arg) {
     if (p->parts > 1) {
         if (!split_scan(&p->scan, p->paths.output, p->parts, p->pf.ratio_permille, &p->partv, &e)) goto out;
         p->nparts = p->parts;
+    } else if (p->part_size) {
+        if (!split_scan_size(&p->scan, p->paths.output, p->part_size, p->pf.ratio_permille, &p->partv, &p->nparts, &e)) goto out;
     }
     p->ok = 1;
 out:
@@ -543,10 +585,7 @@ static void start_check(void) {
     A.gen++;
     if (A.pending) A.pending->cancel = 1, A.pending = NULL;
     pf_free(A.pf), A.pf = NULL;
-    {
-        int parts = parts_value();
-        setf(ID_PARTS_NOTE, parts > 1 ? "ZIP files, balanced by size" : "ZIP file");
-    }
+    split_controls();
     {
         int del = checked(ID_DELETE);
         enable(ID_DELETE_RO, del);
@@ -561,7 +600,7 @@ static void start_check(void) {
         return;
     }
     out = output_path(&why);
-    if (!out || !read_options(&o, &why)) {
+    if (!out || !read_options(&o, &why) || (part_size_value(&why), why)) {
         verdict_color = 2;
         clear_space(why);
         zs_free(out);
@@ -575,6 +614,7 @@ static void start_check(void) {
     p->output = out;
     p->o = o;
     p->parts = parts_value();
+    p->part_size = part_size_value(&why);
     A.pending = p;
     verdict_color = 0;
     set(ID_VERDICT, "Checking the selection and the free space...");
@@ -615,13 +655,25 @@ static void show_check(Pf *p) {
         Buf t = {0};
         buf_puts(&t, f->explanation);
         if (p->scan.nskips) buf_fmt(&t, " %U items cannot be archived and will be left alone.", (u64)p->scan.nskips);
+        if (p->part_size && p->partv) {
+            int over = 0;
+            for (i = 0; i < p->nparts; i++)
+                if (p->partv[i].files == 1 && p->partv[i].estimated > p->part_size) over++;
+            if (over == 1) buf_puts(&t, " One file is larger than the size chosen, so it gets a larger ZIP file of its own.");
+            else if (over) buf_fmt(&t, " %d files are larger than the size chosen, so each gets a larger ZIP file of its own.", over);
+        }
         set(ID_VERDICT, buf_cstr(&t));
         buf_free(&t);
     }
     show_free_space(f->dest_dir);
     uw_send(C(ID_PARTS_LIST), LVM_DELETEALLITEMS, 0, 0);
     if (p->nparts > 1) {
-        setf(ID_PARTS_TITLE, "The archive will be split into %d ZIP files:", p->nparts);
+        if (p->part_size) {
+            char *t = human(p->part_size);
+            setf(ID_PARTS_TITLE, "Split into %d ZIP files of about %s or less:", p->nparts, t);
+            zs_free(t);
+        } else
+            setf(ID_PARTS_TITLE, "The archive will be split into %d ZIP files:", p->nparts);
         for (i = 0; i < p->nparts; i++) {
             Part *q = &p->partv[i];
             char *s1 = zs_fmt("%U", q->files), *s2 = human(q->bytes), *s3 = human(q->estimated), *s4 = human(q->worst);
@@ -633,8 +685,13 @@ static void show_check(Pf *p) {
             zs_free(s1), zs_free(s2), zs_free(s3), zs_free(s4);
         }
         ShowWindow(C(ID_PARTS_LIST), A.page == P_SETUP ? SW_SHOW : SW_HIDE);
+    } else if (p->part_size) {
+        char *t = human(p->part_size);
+        setf(ID_PARTS_TITLE, "Everything fits in one ZIP file of %s.", t);
+        zs_free(t);
+        ShowWindow(C(ID_PARTS_LIST), SW_HIDE);
     } else {
-        set(ID_PARTS_TITLE, "Tip: \"Split into\" makes several separate, complete ZIP files.");
+        set(ID_PARTS_TITLE, "Tip: \"Split\" makes several separate, complete ZIP files.");
         ShowWindow(C(ID_PARTS_LIST), SW_HIDE);
     }
 }
@@ -1400,7 +1457,11 @@ static void on_command(int id, int code) {
     case ID_DIR:
     case ID_FREE:
     case ID_PARTS:
+    case ID_PART_SIZE:
         if (code == EN_CHANGE) schedule_check();
+        break;
+    case ID_SPLIT:
+        if (code == CBN_SELCHANGE) split_controls(), schedule_check();
         break;
     case ID_LEVEL:
         if (code == CBN_SELCHANGE) schedule_check();
