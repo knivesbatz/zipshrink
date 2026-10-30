@@ -1388,7 +1388,6 @@ impl App {
                         label(ui, format!("Version {}", zipshrink_core::VERSION));
                         label(ui, "Creates ZIP archives and reclaims disk space as it goes.");
                         label(ui, "Free software under the MIT License.");
-                        label(ui, "Year 2000 compliant. (And 2038, and 2107: ZIP64 and NTFS timestamps.)");
                         colored(ui, "Pixel font derived from Liberation Sans (SIL OFL 1.1).", GRAY_TEXT);
                         colored(ui, format!("Updates from github.com/{}", zipshrink_update::REPO), GRAY_TEXT);
                     },
