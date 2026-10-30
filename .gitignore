@@ -1,0 +1,6 @@
+/target
+/dist
+*.partial
+*.partial.journal
+/scratch
+.DS_Store
