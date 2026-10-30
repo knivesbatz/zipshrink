@@ -11,7 +11,8 @@
   timestamp, NTFS timestamps); DOS attributes.
 * Per-file SHA-256 in a private extra field, used by `zipshrink verify`.
 * Split output is a set of independent ZIP files (`NAME.part1.zip`, …), not a
-  spanned/multi-volume archive.
+  spanned/multi-volume archive. Split into a number of parts (2–999) or into
+  parts of about a given size (64 KB or more; at most 999 parts).
 
 Archives open in Windows Explorer, 7-Zip, WinZip, WinRAR, Info-ZIP `unzip`,
 macOS Archive Utility, Python `zipfile` and others. Very old tools that
@@ -43,8 +44,8 @@ lost with them.
 * Other formats (7z, tar, zstd, Deflate64).
 * Updating or appending to an existing ZIP.
 * Archives of 4 GiB or more on FAT16/FAT32 destinations (their file size
-  limit); ZipShrink warns in the space check, and `--parts` keeps each archive
-  smaller.
+  limit); ZipShrink warns in the space check, and `--part-size` (for example
+  `--part-size 4000M`) keeps each archive smaller.
 * macOS and Linux (dropped in 0.2).
 
 ## Platforms
