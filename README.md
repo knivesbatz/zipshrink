@@ -10,8 +10,8 @@ of one file, not another 200 GB.
 
 It is a free, open-source desktop app and command-line tool for Windows 10
 and 11, with the same engine building on macOS and Linux. It looks like it
-shipped in 1998 — on purpose — but underneath it is a modern, crash-safe,
-fully verified archiver.
+shipped in 1998, with the "futuristic" Millennium touches of 1999–2001 — on
+purpose — but underneath it is a modern, crash-safe, fully verified archiver.
 
 ![ZipShrink main window](docs/screenshots/main-window.png)
 
@@ -159,7 +159,11 @@ release (it contains `zipshrink` and `zipshrink-gui`), or build from source.
 
 ![Deletion must be confirmed](docs/screenshots/delete-confirmation.png)
 
-While it runs you see the current file and its status (Compressing,
+While it runs, a millennium-style control panel shows live readings: an LCD
+with the overall percentage, transfer rate, space freed and files done; a
+segmented throughput meter (one bar per quarter second, with the peak rate);
+and activity lights that flash as files are actually compressed, verified,
+committed to the journal and deleted. Below it you see the current file and its status (Compressing,
 Verifying, Safely archived, Original deleted, Skipped, Failed), overall
 progress, archive size, estimated remaining size, free space, space
 reclaimed, files done and remaining, compression ratio and speed. **Pause**

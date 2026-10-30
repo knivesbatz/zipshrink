@@ -6,6 +6,7 @@ mod app;
 mod icons;
 mod theme;
 mod worker;
+mod y2k;
 
 use std::path::PathBuf;
 
