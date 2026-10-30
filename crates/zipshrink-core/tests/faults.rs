@@ -231,6 +231,7 @@ fn damaged_partial_halts_pending_deletions() {
     let mut job = Job::open(&out).unwrap();
     let r = run(&mut job);
     assert!(matches!(r.outcome, Outcome::Stopped { kind: StopKind::Damaged, resumable: false, .. }), "{r:?}");
+    drop(job); // releases the journal lock (Windows refuses reads while it is held)
     assert_eq!(expected_entries(&src), before, "nothing more was deleted");
     assert_nothing_lost(&want, &src, &committed_hashes(&out));
 }
