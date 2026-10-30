@@ -1,0 +1,28 @@
+name: Possible data loss
+description: A file was deleted or damaged that should not have been. These are treated as the highest priority.
+labels: [data-loss, priority]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Please do not delete or modify the `.partial`, `.journal` or `.zip` files involved** until this is understood.
+        Run `zipshrink status <file>.partial` and `zipshrink verify <file>.zip` and paste the output below.
+        Do not attach archives that contain private data.
+  - type: input
+    id: version
+    attributes: { label: "ZipShrink version" }
+    validations: { required: true }
+  - type: input
+    id: os
+    attributes: { label: "Operating system and filesystem", placeholder: "Windows 11, NTFS on internal SSD" }
+    validations: { required: true }
+  - type: textarea
+    id: what
+    attributes: { label: "What was lost or damaged", and how you noticed }
+    validations: { required: true }
+  - type: textarea
+    id: events
+    attributes: { label: "Anything unusual during the job", description: "Crash, power cut, disk full, files in use, network drive, antivirus, cloud sync..." }
+  - type: textarea
+    id: output
+    attributes: { label: "Output of zipshrink status / verify", render: text }
