@@ -26,7 +26,7 @@ jobs:
           targets: x86_64-pc-windows-gnu
       - run: sudo apt-get update && sudo apt-get install -y mingw-w64 nsis wixl zip
       - run: packaging/build-windows.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: windows, path: dist/ }
 
   unix:
@@ -54,7 +54,7 @@ jobs:
           mkdir -p "$d" dist
           cp target/${{ matrix.target }}/release/zipshrink target/${{ matrix.target }}/release/zipshrink-gui LICENSE README.md THIRD_PARTY_LICENSES.md "$d/"
           tar czf "dist/$d.tar.gz" "$d"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: unix-${{ matrix.target }}
           path: dist/
