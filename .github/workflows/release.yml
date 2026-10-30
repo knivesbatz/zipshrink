@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to release (e.g. v0.1.0)
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  ZIPSHRINK_UPDATE_REPO: ${{ github.repository }}
+
+jobs:
+  windows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      - run: sudo apt-get update && sudo apt-get install -y mingw-w64 nsis wixl zip
+      - run: packaging/build-windows.sh
+      - uses: actions/upload-artifact@v4
+        with: { name: windows, path: dist/ }
+
+  unix:
+    strategy:
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { os: macos-latest, target: aarch64-apple-darwin }
+          - { os: macos-latest, target: x86_64-apple-darwin }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libxkbcommon-dev
+      - run: cargo build --release --locked --target ${{ matrix.target }} -p zipshrink-cli -p zipshrink-gui
+      - shell: bash
+        run: |
+          set -eux
+          v="${GITHUB_REF_NAME#v}"
+          [ -n "${{ inputs.tag }}" ] && v="${{ inputs.tag }}" && v="${v#v}"
+          d="zipshrink-$v-${{ matrix.target }}"
+          mkdir -p "$d" dist
+          cp target/${{ matrix.target }}/release/zipshrink target/${{ matrix.target }}/release/zipshrink-gui LICENSE README.md THIRD_PARTY_LICENSES.md "$d/"
+          tar czf "dist/$d.tar.gz" "$d"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unix-${{ matrix.target }}
+          path: dist/
+
+  publish:
+    needs: [windows, unix]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts, merge-multiple: true }
+      - name: Checksums and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eux
+          tag="${{ inputs.tag }}"; tag="${tag:-$GITHUB_REF_NAME}"
+          cd artifacts
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+          gh release create "$tag" * --repo "$GITHUB_REPOSITORY" --title "ZipShrink ${tag#v}" --generate-notes --verify-tag

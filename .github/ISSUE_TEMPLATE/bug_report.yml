@@ -1,0 +1,36 @@
+name: Bug report
+description: Something does not work as described
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If files were **lost or deleted unexpectedly**, please use the "Possible data loss" template instead.
+  - type: input
+    id: version
+    attributes: { label: "ZipShrink version", placeholder: "0.1.0 (Help > About, or zipshrink --version)" }
+    validations: { required: true }
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [Windows 11, Windows 10, macOS, Linux, Other]
+    validations: { required: true }
+  - type: dropdown
+    id: ui
+    attributes: { label: "Used through", options: [Desktop app, Command line, Both] }
+  - type: textarea
+    id: what
+    attributes: { label: "What happened", description: "Include the exact error text, the command you ran, and any screenshots." }
+    validations: { required: true }
+  - type: textarea
+    id: expected
+    attributes: { label: "What you expected" }
+  - type: textarea
+    id: steps
+    attributes: { label: "Steps to reproduce" }
+  - type: textarea
+    id: status
+    attributes:
+      label: Output of `zipshrink status` (for interrupted jobs)
+      render: text

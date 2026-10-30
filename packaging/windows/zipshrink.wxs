@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ZipShrink MSI. (It does not add zipshrink.exe to PATH; the setup .exe offers that.)
+  ZipShrink MSI for Windows 10 and 11 (x64), per-machine, for deployment
+  tools and `msiexec /i ZipShrink-x64.msi /qn`.
+  Built with wixl (msitools) or WiX 3:
+    wixl -a x64 -D Version=0.1.0 -D BinDir=path/to/exes -o ZipShrink-x64.msi zipshrink.wxs
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" Name="ZipShrink" Language="1033" Version="$(var.Version)" Manufacturer="ZipShrink contributors"
+           UpgradeCode="6B0E2F9A-3C41-4E7B-9F0D-2A5C8E1B7D34">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine"
+             Description="ZipShrink - create ZIP archives that reclaim disk space as they go" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of ZipShrink is already installed." />
+    <Media Id="1" Cabinet="zipshrink.cab" EmbedCab="yes" />
+    <!-- MSI reports Windows 8.1 and later as 6.3 unless an app manifest says otherwise. -->
+    <Condition Message="ZipShrink needs 64-bit Windows 10 or Windows 11.">VersionNT64 &gt;= 603</Condition>
+    <Icon Id="zipshrink.ico" SourceFile="../../assets/zipshrink.ico" />
+    <Property Id="ARPPRODUCTICON" Value="zipshrink.ico" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/$(var.Repo)" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLDIR" Name="ZipShrink">
+          <Component Id="Gui" Guid="1F6C2B7E-8D9A-4C3B-A5E2-7B1D0C9E8F61" Win64="yes">
+            <File Id="GuiExe" Name="zipshrink-gui.exe" Source="$(var.BinDir)/zipshrink-gui.exe" KeyPath="yes" />
+          </Component>
+          <Component Id="Cli" Guid="2A7D3C8F-9EAB-4D4C-B6F3-8C2E1DAF9072" Win64="yes">
+            <File Id="CliExe" Name="zipshrink.exe" Source="$(var.BinDir)/zipshrink.exe" KeyPath="yes" />
+          </Component>
+          <Component Id="Docs" Guid="3B8E4D90-AFBC-4E5D-87A4-9D3F2EB0A183" Win64="yes">
+            <File Id="License" Name="LICENSE.txt" Source="../../LICENSE" KeyPath="yes" />
+            <File Id="ThirdParty" Name="THIRD_PARTY_LICENSES.md" Source="../../THIRD_PARTY_LICENSES.md" />
+            <File Id="Readme" Name="README.txt" Source="../../README.md" />
+          </Component>
+          <Component Id="ContextMenu" Guid="4C9F5EA1-B0CD-4F6E-98B5-AE403FC1B294" Win64="yes">
+            <RegistryValue Root="HKLM" Key="Software\Classes\Directory\shell\ZipShrink" Value="Compress with ZipShrink..." Type="string" KeyPath="yes" />
+            <RegistryValue Root="HKLM" Key="Software\Classes\Directory\shell\ZipShrink" Name="Icon" Value="[INSTALLDIR]zipshrink-gui.exe" Type="string" />
+            <RegistryValue Root="HKLM" Key="Software\Classes\Directory\shell\ZipShrink\command" Value="&quot;[INSTALLDIR]zipshrink-gui.exe&quot; &quot;%1&quot;" Type="string" />
+            <RegistryValue Root="HKLM" Key="Software\Classes\*\shell\ZipShrink" Value="Compress with ZipShrink..." Type="string" />
+            <RegistryValue Root="HKLM" Key="Software\Classes\*\shell\ZipShrink" Name="Icon" Value="[INSTALLDIR]zipshrink-gui.exe" Type="string" />
+            <RegistryValue Root="HKLM" Key="Software\Classes\*\shell\ZipShrink\command" Value="&quot;[INSTALLDIR]zipshrink-gui.exe&quot; &quot;%1&quot;" Type="string" />
+          </Component>
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder">
+        <Component Id="StartMenu" Guid="5DA06FB2-C1DE-4A7F-A9C6-BF514AD2C3A5" Win64="yes">
+          <Shortcut Id="StartShortcut" Name="ZipShrink" Target="[INSTALLDIR]zipshrink-gui.exe" WorkingDirectory="INSTALLDIR" Icon="zipshrink.ico" />
+          <RegistryValue Root="HKLM" Key="Software\ZipShrink" Name="StartMenuShortcut" Value="1" Type="integer" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </Directory>
+
+    <Feature Id="Main" Title="ZipShrink" Level="1">
+      <ComponentRef Id="Gui" />
+      <ComponentRef Id="Cli" />
+      <ComponentRef Id="Docs" />
+      <ComponentRef Id="ContextMenu" />
+      <ComponentRef Id="StartMenu" />
+    </Feature>
+  </Product>
+</Wix>
