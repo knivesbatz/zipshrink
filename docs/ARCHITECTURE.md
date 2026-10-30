@@ -102,8 +102,7 @@ monochrome hinted renderer at 11 px and converted pixel-for-pixel into a
 TrueType font (`scripts/make_pixel_font.py`), so egui reproduces the bitmap
 exactly at 13 px. `y2k.rs` adds the 1999–2001 "futuristic" layer: a
 7-segment LCD readout with unlit ghost segments, a segmented throughput meter,
-LED activity lights, and a chrome-on-perspective-grid banner with a "Year 2000
-Compliant" seal. Every reading comes from real engine events and counters
+LED activity lights, and a chrome-on-perspective-grid banner. Every reading comes from real engine events and counters
 (throughput is sampled from bytes processed; each light flashes when the engine
 reports that operation); nothing animates on its own.
 

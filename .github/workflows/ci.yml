@@ -42,17 +42,29 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libxkbcommon-dev
       - uses: Swatinem/rust-cache@v2
       - name: Unit, integration, fault-injection and crash tests
-        run: cargo test --workspace --locked --features ${{ env.FEATURES }}
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --workspace --locked --features "$FEATURES" 2>&1 | tee test-output.txt
+      - name: Report failing tests
+        if: failure()
+        shell: bash
+        run: |
+          # Surface the failure lines as annotations, readable without the full log.
+          grep -E "panicked at|^test .* FAILED|^error(\[|:)|left:|right:|assertion" test-output.txt | head -40 |
+            while IFS= read -r line; do echo "::error title=test failure::$line"; done
+          tail -5 test-output.txt | while IFS= read -r line; do echo "::error title=test tail::$line"; done
       - name: Release build
         run: cargo build --release --locked -p zipshrink-cli -p zipshrink-gui
       - name: Round trip with deletion, checked by a third-party tool
         shell: bash
         run: |
           set -euxo pipefail
+          trap 'echo "::error title=round trip::line $LINENO failed: $BASH_COMMAND"' ERR
           Z=target/release/zipshrink
           mkdir -p rt/src/a/b rt/src/empty
           head -c 5000000 /dev/urandom > rt/src/a/random.bin
-          yes "some text" | head -c 3000000 > rt/src/a/b/text.txt
+          head -c 3000000 < <(yes "some text") > rt/src/a/b/text.txt  # no pipe: `yes` would die of SIGPIPE under pipefail
           echo "unicode ü 日本" > "rt/src/a/ünï.txt"
           (cd rt && find src -type f -exec sha256sum {} + | sort -k2) > rt/before.sha
           $Z create rt/src -o rt/out.zip --delete-originals --yes --min-free 16M --parts 2
@@ -60,13 +72,11 @@ jobs:
           $Z verify rt/out.part1.zip
           $Z verify rt/out.part2.zip
           mkdir rt/x
-          if command -v 7z >/dev/null; then
-            7z t rt/out.part1.zip && 7z t rt/out.part2.zip
-            7z x -ort/x rt/out.part1.zip && 7z x -aoa -ort/x rt/out.part2.zip
-          else
-            unzip -t rt/out.part1.zip && unzip -t rt/out.part2.zip
-            unzip -o -d rt/x rt/out.part1.zip && unzip -o -d rt/x rt/out.part2.zip
-          fi
+          # 7-Zip checks integrity where installed; Python's zipfile (UTF-8
+          # aware on every platform) extracts.
+          if command -v 7z >/dev/null; then 7z t rt/out.part1.zip; 7z t rt/out.part2.zip; fi
+          PY=$(command -v python3 || command -v python)
+          "$PY" -c "import sys, zipfile; [zipfile.ZipFile(p).extractall(sys.argv[1]) for p in sys.argv[2:]]" rt/x rt/out.part1.zip rt/out.part2.zip
           (cd rt/x && find src -type f -exec sha256sum {} + | sort -k2) | diff - rt/before.sha
 
   windows-packages:
