@@ -11,7 +11,7 @@ ZipShrink is MIT licensed. It is built from the Rust crates below, each under th
 * egui's built-in fallback fonts (Ubuntu-Light: Ubuntu Font Licence 1.0; Hack: MIT/Bitstream Vera;
   Noto Emoji: SIL OFL 1.1; emoji-icon-font: MIT/OFL), embedded by the `epaint_default_fonts` crate.
 
-## Crates (417)
+## Crates (418)
 
 ### (MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0
 
@@ -77,6 +77,7 @@ ZipShrink is MIT licensed. It is built from the Rust crates below, each under th
 * blocking 1.7.0 — https://github.com/smol-rs/blocking
 * color 0.3.3 — https://github.com/linebender/color
 * concurrent-queue 2.5.0 — https://github.com/smol-rs/concurrent-queue
+* const-oid 0.10.2 — https://github.com/RustCrypto/formats
 * encode_unicode 1.0.0 — https://github.com/tormol/encode_unicode
 * equivalent 1.0.3 — https://github.com/indexmap-rs/equivalent
 * event-listener 5.4.2 — https://github.com/smol-rs/event-listener
@@ -172,7 +173,6 @@ ZipShrink is MIT licensed. It is built from the Rust crates below, each under th
 * dlib 0.5.3 — https://github.com/elinorbgr/dlib
 * endi 1.1.1 — https://github.com/zeenix/endi
 * fax 0.2.7 — https://github.com/pdf-rs/fax
-* generic-array 0.14.7 — https://github.com/fizyk20/generic-array.git
 * glutin-winit 0.5.0 — https://github.com/rust-windowing/glutin
 * harfrust 0.12.0 — https://github.com/harfbuzz/harfrust
 * indicatif 0.18.6 — https://github.com/console-rs/indicatif
@@ -271,7 +271,7 @@ ZipShrink is MIT licensed. It is built from the Rust crates below, each under th
 * async-trait 0.1.92 — https://github.com/dtolnay/async-trait
 * base64 0.23.1 — https://github.com/marshallpierce/rust-base64
 * bitflags 2.13.2 — https://github.com/bitflags/bitflags
-* block-buffer 0.10.4 — https://github.com/RustCrypto/utils
+* block-buffer 0.12.1 — https://github.com/RustCrypto/utils
 * bumpalo 3.20.3 — https://github.com/fitzgen/bumpalo
 * cfg-if 1.0.5 — https://github.com/rust-lang/cfg-if
 * chrono 0.4.45 — https://github.com/chronotope/chrono
@@ -287,13 +287,13 @@ ZipShrink is MIT licensed. It is built from the Rust crates below, each under th
 * core-foundation-sys 0.8.7 — https://github.com/servo/core-foundation-rs
 * core-graphics 0.23.2 — https://github.com/servo/core-foundation-rs
 * core-graphics-types 0.1.3 — https://github.com/servo/core-foundation-rs
-* cpufeatures 0.2.17 — https://github.com/RustCrypto/utils
+* cpufeatures 0.3.1 — https://github.com/RustCrypto/utils
 * crc32fast 1.5.3 — https://github.com/srijs/rust-crc32fast
 * crossbeam-channel 0.5.17 — https://github.com/crossbeam-rs/crossbeam
 * crossbeam-utils 0.8.23 — https://github.com/crossbeam-rs/crossbeam
-* crypto-common 0.1.7 — https://github.com/RustCrypto/traits
+* crypto-common 0.2.2 — https://github.com/RustCrypto/traits
 * deranged 0.5.9 — https://github.com/jhpratt/deranged
-* digest 0.10.7 — https://github.com/RustCrypto/traits
+* digest 0.11.3 — https://github.com/RustCrypto/traits
 * displaydoc 0.2.7 — https://github.com/yaahc/displaydoc
 * document-features 0.2.12 — https://github.com/slint-ui/document-features
 * ecolor 0.37.0 — https://github.com/emilk/egui
@@ -333,6 +333,7 @@ ZipShrink is MIT licensed. It is built from the Rust crates below, each under th
 * hex 0.4.3 — https://github.com/KokaKiwi/rust-hex
 * http 1.5.0 — https://github.com/hyperium/http
 * httparse 1.10.1 — https://github.com/seanmonstar/httparse
+* hybrid-array 0.4.15 — https://github.com/RustCrypto/hybrid-array
 * iana-time-zone 0.1.65 — https://github.com/strawlab/iana-time-zone
 * idna 1.1.0 — https://github.com/servo/rust-url/
 * image 0.25.10 — https://github.com/image-rs/image
@@ -380,7 +381,7 @@ ZipShrink is MIT licensed. It is built from the Rust crates below, each under th
 * serde_derive 1.0.229 — https://github.com/serde-rs/serde
 * serde_json 1.0.154 — https://github.com/serde-rs/json
 * serde_repr 0.1.21 — https://github.com/dtolnay/serde-repr
-* sha2 0.10.9 — https://github.com/RustCrypto/hashes
+* sha2 0.11.1 — https://github.com/RustCrypto/hashes
 * signal-hook-registry 1.4.8 — https://github.com/vorner/signal-hook
 * siphasher 1.0.4 — https://github.com/jedisct1/rust-siphash
 * skrifa 0.44.0 — https://github.com/googlefonts/fontations
