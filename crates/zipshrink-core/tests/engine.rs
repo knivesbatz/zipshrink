@@ -266,7 +266,8 @@ fn preflight_reports_fit_and_misfit() {
     assert_eq!(p.verdict, space::Verdict::Fits, "{}", p.explanation);
     assert!(p.estimated_archive < p.worst_case_archive);
     assert!(p.sampled_ratio.unwrap() < 1.0);
-    let huge = JobOptions { min_free: p.free_space, ..opts() };
+    // Tests running in parallel free space, so leave a wide margin.
+    let huge = JobOptions { min_free: p.free_space + (64 << 30), ..opts() };
     let p = space::preflight(&s, &paths, &huge).unwrap();
     assert_eq!(p.verdict, space::Verdict::DoesNotFit);
 }
@@ -392,7 +393,7 @@ fn zip64_file_larger_than_4_gib() {
     drop(f);
     let want = expected_entries(&src);
     let out = t.path().join("huge.zip");
-    let r = create_and_run(&[src.clone()], &out, JobOptions { level: 1, delete_originals: true, ..opts() });
+    let r = create_and_run(std::slice::from_ref(&src), &out, JobOptions { level: 1, delete_originals: true, ..opts() });
     assert_eq!(r.outcome, Outcome::Completed, "{r:?}");
     assert!(r.original_bytes > 0xffff_ffff);
     assert_eq!(archive_entries(&out), want);
@@ -415,7 +416,7 @@ fn zip64_more_than_65535_entries() {
     let want = expected_entries(&src);
     assert!(want.len() > 65_535);
     let out = t.path().join("many.zip");
-    let r = create_and_run(&[src.clone()], &out, JobOptions { threads: 4, ..opts() });
+    let r = create_and_run(std::slice::from_ref(&src), &out, JobOptions { threads: 4, ..opts() });
     assert_eq!(r.outcome, Outcome::Completed, "{r:?}");
     assert_eq!(archive_entries(&out), want);
 }

@@ -81,25 +81,6 @@ pub const FOLDER: Art = [
     "................",
 ];
 
-pub const FILE: Art = [
-    "..KKKKKKKK......",
-    "..KWWWWWWKK.....",
-    "..KWWWWWWKWK....",
-    "..KWWWWWWKKKK...",
-    "..KWWWWWWWWWK...",
-    "..KWDDDDDDWWK...",
-    "..KWWWWWWWWWK...",
-    "..KWDDDDDDDWK...",
-    "..KWWWWWWWWWK...",
-    "..KWDDDDDDDWK...",
-    "..KWWWWWWWWWK...",
-    "..KWDDDDDWWWK...",
-    "..KWWWWWWWWWK...",
-    "..KWWWWWWWWWK...",
-    "..KKKKKKKKKKK...",
-    "................",
-];
-
 pub const WARNING: Art = [
     ".......KK.......",
     "......KYYK......",

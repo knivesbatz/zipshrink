@@ -39,6 +39,7 @@ struct RunView {
     stopping: bool,
     close_after: bool,
     show_issues: bool,
+    tel: crate::y2k::Telemetry,
 }
 
 enum Screen {
@@ -117,7 +118,6 @@ pub struct App {
     update: Update,
     maximized: bool,
     acts: Vec<Action>,
-    anim: Instant,
 }
 
 fn default_threads() -> u32 {
@@ -160,7 +160,6 @@ impl App {
             update,
             maximized: false,
             acts: Vec::new(),
-            anim: Instant::now(),
         };
         app.add_sources(sources);
         if let Some(r) = resume {
@@ -276,6 +275,7 @@ impl RunView {
             stopping: false,
             close_after: false,
             show_issues: false,
+            tel: crate::y2k::Telemetry::new(),
         }
     }
 
@@ -284,10 +284,12 @@ impl RunView {
             Event::Phase(p) => self.phase = p,
             Event::Progress(s) => {
                 self.phase = s.phase;
+                self.tel.sample(&s);
                 self.stats = s;
             }
             Event::Message(m) => self.issues.push(Row { idx: u64::MAX, name: m, size: 0, status: EntryStatus::Waiting }),
             Event::Entry { idx, name, size, status } => {
+                self.tel.on_status(&status);
                 if matches!(status, EntryStatus::Failed(_) | EntryStatus::Kept(_) | EntryStatus::Skipped(_)) {
                     self.issues.push(Row { idx, name: name.clone(), size, status: status.clone() });
                 }
@@ -763,6 +765,8 @@ impl App {
         }
         let hovering = ctx.input(|i| !i.raw.hovered_files.is_empty());
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            crate::y2k::banner(ui, "Space-saving ZIP archiver  -  Millennium Edition");
+            ui.add_space(6.0);
             group(ui, "Files and folders to compress", |ui| {
                 ui.horizontal(|ui| {
                     let list_w = ui.available_width() - 96.0;
@@ -979,25 +983,15 @@ impl App {
     }
 
     fn run_screen(&mut self, ui: &mut Ui, ctx: &egui::Context) {
-        let anim_t = self.anim.elapsed().as_secs_f32();
         let Screen::Run(rv) = &mut self.screen else { return };
         let s = rv.stats.clone();
-        if s.phase == Phase::Compressing && !rv.stopping {
+        if !rv.stopping {
+            // Keeps the LEDs and meter current between engine events.
             ctx.request_repaint_after(Duration::from_millis(80));
         }
-        // The flying-page animation of the era's copy dialogs.
-        let (strip, _) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::hover());
-        {
-            let p = ui.painter();
-            icons::paint(p, pos2(strip.left() + 20.0, strip.top() + 4.0), icons::FOLDER, 2.0);
-            icons::paint(p, pos2(strip.left() + 260.0, strip.top() + 4.0), icons::APP, 2.0);
-            if s.phase == Phase::Compressing && !rv.stopping {
-                let f = (anim_t * 0.9).fract();
-                let x = strip.left() + 52.0 + f * 196.0;
-                let y = strip.top() + 14.0 - (f * std::f32::consts::PI).sin() * 12.0;
-                icons::paint(p, pos2(x.round(), y.round()), icons::FILE, 1.0);
-            }
-        }
+        rv.tel.sample(&s);
+        crate::y2k::console(ui, &s, &rv.tel, rv.stopping);
+        ui.add_space(6.0);
         let (n, of, out) = rv.part.clone();
         bold(ui, if rv.stopping { "Stopping safely...".to_string() } else { format!("{}...", rv.phase.label()) });
         if of > 1 {
@@ -1394,6 +1388,7 @@ impl App {
                         label(ui, format!("Version {}", zipshrink_core::VERSION));
                         label(ui, "Creates ZIP archives and reclaims disk space as it goes.");
                         label(ui, "Free software under the MIT License.");
+                        label(ui, "Year 2000 compliant. (And 2038, and 2107: ZIP64 and NTFS timestamps.)");
                         colored(ui, "Pixel font derived from Liberation Sans (SIL OFL 1.1).", GRAY_TEXT);
                         colored(ui, format!("Updates from github.com/{}", zipshrink_update::REPO), GRAY_TEXT);
                     },

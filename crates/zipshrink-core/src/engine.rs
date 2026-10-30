@@ -620,13 +620,7 @@ impl Job {
             return;
         }
         self.last_tick = now;
-        let (t0, b0) = self.speed_mark;
-        let dt = now.duration_since(t0).as_secs_f64();
-        if dt >= 0.5 {
-            let inst = self.stats.bytes_processed.saturating_sub(b0) as f64 / dt;
-            self.stats.speed = if self.stats.speed == 0.0 { inst } else { self.stats.speed * 0.6 + inst * 0.4 };
-            self.speed_mark = (now, self.stats.bytes_processed);
-        }
+        update_speed(&mut self.stats, &mut self.speed_mark, now);
         self.stats.elapsed = now.duration_since(self.started);
         if let Some(a) = &self.archive {
             self.stats.archive_size = a.len;
@@ -999,6 +993,7 @@ impl Job {
                         c.done = read_total;
                     }
                     self.stats.bytes_processed = processed_before + read_total;
+                    update_speed(&mut self.stats, &mut self.speed_mark, Instant::now());
                     let mut s = self.stats.clone();
                     s.archive_size = sink.archive.len + sink.buf.len() as u64;
                     s.elapsed = self.started.elapsed();
@@ -1299,6 +1294,17 @@ impl Job {
         std::fs::remove_file(&self.paths.journal).map_err(|e| Error::io(&self.paths.journal, e))?;
         let _ = platform::sync_dir(&self.paths.dest_dir());
         Ok(())
+    }
+}
+
+/// Smoothed read speed over windows of at least half a second.
+fn update_speed(stats: &mut Stats, mark: &mut (Instant, u64), now: Instant) {
+    let (t0, b0) = *mark;
+    let dt = now.duration_since(t0).as_secs_f64();
+    if dt >= 0.5 {
+        let inst = stats.bytes_processed.saturating_sub(b0) as f64 / dt;
+        stats.speed = if stats.speed == 0.0 { inst } else { stats.speed * 0.6 + inst * 0.4 };
+        *mark = (now, stats.bytes_processed);
     }
 }
 
