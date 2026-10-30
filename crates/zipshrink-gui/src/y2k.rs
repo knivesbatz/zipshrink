@@ -252,8 +252,8 @@ pub fn console(ui: &mut egui::Ui, s: &Stats, tel: &Telemetry, stopping: bool) {
     }
 }
 
-/// Chrome wordmark over a perspective grid with an orbit swoosh and a
-/// "Year 2000 Compliant" seal, the way boxed software announced itself.
+/// Chrome wordmark over a perspective grid with an orbit swoosh, the way
+/// boxed software of the time announced itself.
 pub fn banner(ui: &mut egui::Ui, subtitle: &str) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 58.0), egui::Sense::hover());
     let p = ui.painter().with_clip_rect(rect);
@@ -339,11 +339,5 @@ pub fn banner(ui: &mut egui::Ui, subtitle: &str) {
     let sub = pos2(r.left() + 2.0, r.bottom() + 1.0);
     p.text(sub + vec2(1.0, 1.0), egui::Align2::LEFT_TOP, subtitle, theme::regular(), Color32::from_rgb(10, 0, 30));
     p.text(sub, egui::Align2::LEFT_TOP, subtitle, theme::regular(), Color32::from_rgb(190, 240, 255));
-    // "Year 2000 Compliant" seal.
-    let seal = Rect::from_min_size(pos2(rect.right() - 92.0, rect.top() + 9.0), vec2(82.0, 40.0));
-    p.rect_filled(seal, 0.0, Color32::from_rgb(255, 210, 40));
-    theme::edge(&p, seal, Color32::from_rgb(255, 245, 180), Color32::from_rgb(140, 90, 0));
-    p.text(pos2(seal.center().x, seal.top() + 4.0), egui::Align2::CENTER_TOP, "YEAR 2000", theme::bold(), Color32::from_rgb(90, 20, 0));
-    p.text(pos2(seal.center().x, seal.top() + 20.0), egui::Align2::CENTER_TOP, "COMPLIANT", theme::bold(), Color32::from_rgb(90, 20, 0));
     bevel(ui.painter(), rect, Bevel::Field);
 }
