@@ -429,6 +429,13 @@ impl Job {
             }
             return Err(Error::Invalid(format!("no unfinished job found for {}", paths.output.display())));
         }
+        // Another window or process holding the job locks the journal; on
+        // Windows that lock also blocks reading it, so check for it first.
+        if let Ok(f) = OpenOptions::new().read(true).write(true).open(&paths.journal) {
+            if let Err(std::fs::TryLockError::WouldBlock) = f.try_lock() {
+                return Err(Error::Busy("this job is being processed by another ZipShrink window or process".into()));
+            }
+        }
         let loaded = journal::load(&paths.journal)?;
         let Some(Record::Header(header)) = loaded.records.first().cloned() else {
             return Err(Error::Invalid(
