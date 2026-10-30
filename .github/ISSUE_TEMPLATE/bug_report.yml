@@ -8,13 +8,13 @@ body:
         If files were **lost or deleted unexpectedly**, please use the "Possible data loss" template instead.
   - type: input
     id: version
-    attributes: { label: "ZipShrink version", placeholder: "0.1.0 (Help > About, or zipshrink --version)" }
+    attributes: { label: "ZipShrink version", placeholder: "0.2.0 (Help > About, or zipshrink --version)" }
     validations: { required: true }
   - type: dropdown
     id: os
     attributes:
       label: Operating system
-      options: [Windows 11, Windows 10, macOS, Linux, Other]
+      options: [Windows 11, Windows 10, Windows 8 or 8.1, Windows 7, Windows Vista, Windows XP or 2000, Windows NT 4, Windows Me, Windows 98, Windows 95, Wine, Other]
     validations: { required: true }
   - type: dropdown
     id: ui

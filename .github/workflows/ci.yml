@@ -9,108 +9,97 @@ on:
 permissions:
   contents: read
 
-env:
-  CARGO_TERM_COLOR: always
-  FEATURES: zipshrink-core/failpoints,zipshrink-cli/failpoints
-
 jobs:
-  lint:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-i686 binutils-mingw-w64-i686 nsis wixl
+      - name: Programs, test programs and packages
+        run: |
+          make -j4 B=build all build/zipshrink-fp.exe build/zs-tests.exe
+          packaging/build-windows.sh
+        env:
+          ZIPSHRINK_UPDATE_REPO: ${{ github.repository }}
+      - name: Every import exists on Windows 95
+        run: python3 scripts/check_imports.py build/zipshrink.exe build/zipshrink-gui.exe build/zipshrink-fp.exe build/zs-tests.exe
+      - uses: actions/upload-artifact@v7
         with:
-          components: rustfmt, clippy
-      - run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libxkbcommon-dev
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets --features "$FEATURES" -- -D warnings
-      - name: Dependency licenses
-        run: python3 scripts/third_party.py && git diff --exit-code THIRD_PARTY_LICENSES.md
+          name: build
+          path: |
+            build/*.exe
+            dist/
 
-  test:
-    name: test (${{ matrix.os }})
+  test-wine:
+    name: test (Wine, ${{ matrix.mode }})
+    needs: build
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libxkbcommon-dev
-      - uses: Swatinem/rust-cache@v2
-      - name: Unit, integration, fault-injection and crash tests
-        shell: bash
-        run: |
-          set -o pipefail
-          cargo test --workspace --locked --features "$FEATURES" 2>&1 | tee test-output.txt
-      - name: Report failing tests
-        if: failure()
-        shell: bash
-        run: |
-          # Surface the failure lines as annotations, readable without the full log.
-          grep -E "panicked at|^test .* FAILED|^error(\[|:)|left:|right:|assertion" test-output.txt | head -40 |
-            while IFS= read -r line; do echo "::error title=test failure::$line"; done
-          tail -5 test-output.txt | while IFS= read -r line; do echo "::error title=test tail::$line"; done
-      - name: Release build
-        run: cargo build --release --locked -p zipshrink-cli -p zipshrink-gui
-      - name: Round trip with deletion, checked by a third-party tool
-        shell: bash
-        run: |
-          set -euxo pipefail
-          trap 'echo "::error title=round trip::line $LINENO failed: $BASH_COMMAND"' ERR
-          Z=target/release/zipshrink
-          mkdir -p rt/src/a/b rt/src/empty
-          head -c 5000000 /dev/urandom > rt/src/a/random.bin
-          head -c 3000000 < <(yes "some text") > rt/src/a/b/text.txt  # no pipe: `yes` would die of SIGPIPE under pipefail
-          echo "unicode ü 日本" > "rt/src/a/ünï.txt"
-          (cd rt && find src -type f -exec sha256sum {} + | sort -k2) > rt/before.sha
-          $Z create rt/src -o rt/out.zip --delete-originals --yes --min-free 16M --parts 2
-          test ! -e rt/src
-          $Z verify rt/out.part1.zip
-          $Z verify rt/out.part2.zip
-          mkdir rt/x
-          # 7-Zip checks integrity where installed; Python's zipfile (UTF-8
-          # aware on every platform) extracts.
-          if command -v 7z >/dev/null; then 7z t rt/out.part1.zip; 7z t rt/out.part2.zip; fi
-          PY=$(command -v python3 || command -v python)
-          "$PY" -c "import sys, zipfile; [zipfile.ZipFile(p).extractall(sys.argv[1]) for p in sys.argv[2:]]" rt/x rt/out.part1.zip rt/out.part2.zip
-          (cd rt/x && find src -type f -exec sha256sum {} + | sort -k2) | diff - rt/before.sha
-
-  windows-packages:
+        mode: [win10, win95]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-gnu
-      - run: sudo apt-get update && sudo apt-get install -y mingw-w64 nsis wixl zip
-      - uses: Swatinem/rust-cache@v2
-      - run: packaging/build-windows.sh
-        env:
-          ZIPSHRINK_UPDATE_REPO: ${{ github.repository }}
-      - uses: actions/upload-artifact@v7
-        with:
-          name: windows-packages
-          path: dist/
+      - uses: actions/download-artifact@v4
+        with: { name: build }
+      - name: Install 32-bit Wine
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends wine32:i386 wine
+      - name: Prepare the Wine prefix
+        run: |
+          export WINEPREFIX=$HOME/pfx WINEDEBUG=-all
+          wineboot -i
+          wine reg add 'HKCU\Software\Wine' /v Version /d ${{ matrix.mode }} /f
+          wineserver -w
+          wine build/zipshrink.exe --version
+      - name: Tests
+        run: |
+          export WINEPREFIX=$HOME/pfx LANG=C.UTF-8
+          python3 tests/run.py --build build ${{ matrix.mode == 'win95' && '--win95' || '' }}
 
-  windows-install:
-    needs: windows-packages
+  test-windows:
+    needs: build
     runs-on: windows-latest
     steps:
-      - uses: actions/download-artifact@v8
-        with:
-          name: windows-packages
-          path: dist
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with: { name: build }
+      - name: Tests
+        run: python tests/run.py --build build
+      - name: Round trip checked by 7-Zip
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p rt/src/a/b rt/src/empty
+          head -c 5000000 /dev/urandom > rt/src/a/random.bin
+          head -c 3000000 < <(yes "some text") > rt/src/a/b/text.txt
+          echo "unicode ü 日本" > "rt/src/a/ünï.txt"
+          (cd rt && find src -type f -exec sha256sum {} + | sort -k2) > rt/before.sha
+          build/zipshrink.exe create rt/src -o rt/out.zip --delete-originals --yes --min-free 16M --parts 2
+          test ! -e rt/src
+          7z t rt/out.part1.zip
+          7z t rt/out.part2.zip
+          mkdir rt/x
+          7z x -ort/x rt/out.part1.zip
+          7z x -ort/x rt/out.part2.zip
+          (cd rt/x && find src -type f -exec sha256sum {} + | sort -k2) | diff - rt/before.sha
+
+  windows-install:
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: build }
       - name: Setup installs, runs and uninstalls silently
         shell: pwsh
         run: |
-          $p = Start-Process dist\ZipShrink-x64-setup.exe -ArgumentList '/S' -Wait -PassThru
+          $p = Start-Process dist\ZipShrink-setup.exe -ArgumentList '/S' -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "setup failed: $($p.ExitCode)" }
           $dir = "$env:LOCALAPPDATA\Programs\ZipShrink"
           & "$dir\zipshrink.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw "zipshrink --version failed" }
           if (-not (Test-Path "$dir\zipshrink-gui.exe")) { throw "gui missing" }
           $p = Start-Process "$dir\Uninstall.exe" -ArgumentList '/S',"_?=$dir" -Wait -PassThru
           Start-Sleep -Seconds 3
@@ -118,8 +107,9 @@ jobs:
       - name: MSI installs and uninstalls silently
         shell: pwsh
         run: |
-          $p = Start-Process msiexec -ArgumentList '/i','dist\ZipShrink-x64.msi','/qn','/l*v','msi.log' -Wait -PassThru
+          $p = Start-Process msiexec -ArgumentList '/i','dist\ZipShrink.msi','/qn','/l*v','msi.log' -Wait -PassThru
           if ($p.ExitCode -ne 0) { Get-Content msi.log -Tail 50; throw "msi failed: $($p.ExitCode)" }
-          & "$env:ProgramFiles\ZipShrink\zipshrink.exe" --version
-          $p = Start-Process msiexec -ArgumentList '/x','dist\ZipShrink-x64.msi','/qn' -Wait -PassThru
+          & "${env:ProgramFiles(x86)}\ZipShrink\zipshrink.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw "zipshrink --version failed" }
+          $p = Start-Process msiexec -ArgumentList '/x','dist\ZipShrink.msi','/qn' -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "msi uninstall failed: $($p.ExitCode)" }

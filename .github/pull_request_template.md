@@ -2,8 +2,9 @@
 
 ## Testing
 
-- [ ] `cargo test --workspace --features zipshrink-core/failpoints,zipshrink-cli/failpoints`
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings`
+- [ ] `make` and `make check-imports`
+- [ ] `make test` (natively on Windows, or under Wine)
+- [ ] `python3 tests/run.py --win95` with a Wine prefix in Windows 95 mode, if the change touches file access or the user interface
 
 ## Data safety
 

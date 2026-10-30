@@ -1,0 +1,45 @@
+#include <windows.h>
+#include "resource.h"
+
+#define DESCRIPTION "ZipShrink"
+#define INTERNAL "zipshrink-gui.exe"
+#include "version.rc"
+
+1 ICON "../assets/zipshrink.ico"
+1 24 "app.manifest"
+
+IDM_MAIN MENU
+BEGIN
+  POPUP "&File"
+  BEGIN
+    MENUITEM "&New Archive", IDM_NEW
+    MENUITEM "&Resume Unfinished Job...", IDM_RESUME
+    MENUITEM SEPARATOR
+    MENUITEM "&Verify Archive...", IDM_VERIFY
+    MENUITEM "&Salvage Partial Archive...", IDM_SALVAGE
+    MENUITEM SEPARATOR
+    MENUITEM "E&xit", IDM_EXIT
+  END
+  POPUP "&Tools"
+  BEGIN
+    MENUITEM "Check for &Updates...", IDM_UPDATE
+    MENUITEM "Check for Updates at &Startup", IDM_AUTOUPDATE
+  END
+  POPUP "&Help"
+  BEGIN
+    MENUITEM "&About ZipShrink", IDM_ABOUT
+  END
+END
+
+IDD_CONFIRM DIALOGEX 0, 0, 300, 150
+STYLE DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Confirm File Delete"
+FONT 8, "MS Sans Serif"
+BEGIN
+  ICON "", IDC_WARNICON, 10, 10, 20, 20
+  LTEXT "Permanently delete the original files?", IDC_TITLE, 40, 10, 250, 10
+  LTEXT "", IDC_TEXT, 40, 24, 252, 80
+  AUTOCHECKBOX "I understand that my original files will be deleted", IDC_UNDERSTAND, 40, 108, 250, 10
+  DEFPUSHBUTTON "Yes", IDOK, 96, 128, 50, 14, WS_DISABLED
+  PUSHBUTTON "No", IDCANCEL, 154, 128, 50, 14
+END

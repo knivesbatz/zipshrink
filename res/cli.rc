@@ -1,0 +1,5 @@
+#define DESCRIPTION "ZipShrink command line"
+#define INTERNAL "zipshrink.exe"
+#include "version.rc"
+1 ICON "../assets/zipshrink.ico"
+1 24 "app.manifest"
