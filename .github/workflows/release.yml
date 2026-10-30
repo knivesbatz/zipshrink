@@ -37,8 +37,12 @@ jobs:
           sha256sum * > SHA256SUMS
           cat SHA256SUMS
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            # A release made in the web UI: attach the files to it.
+            # A release made in the web UI, or a draft left by a failed run:
+            # attach the files to it and publish it.
             gh release upload "$tag" * --repo "$GITHUB_REPOSITORY" --clobber
+            if [ "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = true ]; then
+              gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --target "$GITHUB_SHA" --title "ZipShrink ${tag#v}"
+            fi
           else
             # Creates the tag at the built commit when run by hand.
             gh release create "$tag" * --repo "$GITHUB_REPOSITORY" --title "ZipShrink ${tag#v}" --generate-notes --target "$GITHUB_SHA"
