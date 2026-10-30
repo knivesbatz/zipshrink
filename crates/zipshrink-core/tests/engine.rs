@@ -315,7 +315,8 @@ fn salvage_rebuilds_an_archive_without_its_journal() {
     fs::remove_file(&paths.journal).unwrap();
     assert!(matches!(Job::open(&out), Err(Error::Damaged(_))));
     let target = zipshrink_core::salvage::default_output(&paths.partial);
-    assert_eq!(target, out);
+    // Job paths are canonical (on macOS the temp folder sits behind a symlink).
+    assert_eq!(target, dunce::canonicalize(out.parent().unwrap()).unwrap().join(out.file_name().unwrap()));
     let rep = zipshrink_core::salvage::salvage(&paths.partial, &target, &AtomicBool::new(false), &mut |_, _| {}).unwrap();
     assert!(rep.entries >= 6 && rep.check.ok());
     let got = archive_entries(&target);
