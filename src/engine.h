@@ -132,7 +132,13 @@ typedef struct {
     u64 files, bytes, estimated, worst;
 } Part;
 char *part_path(const char *output, int number, int parts);
+#define ZS_MAX_PARTS 999
+#define ZS_MIN_PART_SIZE (64 * 1024ULL)
 int split_scan(const Scan *s, const char *output, int parts, u32 ratio_permille, Part **out, char **err);
+/* Parts whose estimated size stays within `size` (a file larger than that
+ * gets a part of its own). *nparts is 1, with no parts, when everything
+ * fits in one ZIP file. */
+int split_scan_size(const Scan *s, const char *output, u64 size, u32 ratio_permille, Part **out, int *nparts, char **err);
 void parts_free(Part *p, int n);
 /* Outputs of the unfinished parts of the set `path` belongs to, in order. */
 PtrVec unfinished_parts(const char *path);

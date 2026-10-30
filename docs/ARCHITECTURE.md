@@ -14,7 +14,7 @@ src/
   journal.c     the recovery journal
   scan.c        validating the selection and walking it into a plan
   space.c       preflight: sampled ratio, worst case, same-volume analysis, verdict
-  split.c       dividing a plan into N balanced, independent ZIP files
+  split.c       dividing a plan into N balanced, or size-limited, independent ZIP files
   verify.c      streaming inflate, read-back check, whole-archive check, salvage
   engine.c      the job: create, run, batch commit, delete, finalize, resume, report
   update.c      update check and verified installer download (WinINet)
@@ -65,7 +65,7 @@ Windows 95).
 |---|---|
 | `scan` | Makes the selection absolute and checks it (no links, no overlapping roots, no drive roots, archive not inside a source); walks it without following links, files before subfolders, into the ordered plan; skips links, offline files, unrepresentable names and over-long paths with a reason. |
 | `space` | Preflight: compresses samples of up to 24 files (the 12 largest and 12 spread through the plan, first 512 KiB of each) for a ratio; worst case; which data is on the destination volume (only that is freed by deletion); peak need; free space and reserve; verdict and explanation. |
-| `split` | Assigns files in plan order to N parts, cutting where the running total reaches k/N of the data while leaving at least one file for every later part; folders go with the next file; each part gets the folder entries above its files. |
+| `split` | Assigns files in plan order to N parts, cutting where the running total reaches k/N of the data while leaving at least one file for every later part; folders go with the next file; each part gets the folder entries above its files. By size: starts a new part when the next file would take the part's estimated size (sampled ratio plus header overhead) over the limit. |
 | `zipfmt` | Hand-written ZIP and ZIP64 records and their parsers. |
 | `journal` | Append-only, checksummed, flushed text records with torn-tail detection and an exclusive lock. |
 | `engine` | The `Job`: create (journal header and plan), run, batch commit, deletion, finalization, resume, report. |

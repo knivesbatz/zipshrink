@@ -175,7 +175,7 @@ Differences on Windows 95, 98 and Me, which have no Unicode file API:
   deletes it by name. The NT family checks and deletes through one handle.
   See [DATA_SAFETY.md](docs/DATA_SAFETY.md#windows-95-98-and-me).
 - FAT16 and FAT32 cannot hold files of 4 GB or more; the space check warns,
-  and `--parts` keeps each archive smaller.
+  and `--part-size 4000M` keeps each archive smaller.
 - **Updates cannot be downloaded** (on NT 4 either): GitHub requires TLS 1.2,
   which these systems cannot speak. ZipShrink tells you so; get new versions
   from another computer.
@@ -186,7 +186,8 @@ The main window is about 780 × 560 pixels and needs an 800 × 600 screen.
 
 1. Drag files and folders onto the window, or use **Add Folder…** / **Add Files…**.
 2. Choose where to save the archive, its name, the compression level, and
-   optionally **Split into** more than one ZIP.
+   optionally **Split** it into several ZIPs: into a number of files, or
+   into files of a size you choose (for example 650 MB each).
 3. Tick **Delete original files after successful compression** if you want
    the space back as you go.
 4. Check the **Disk space** box: it shows the estimated archive size (from
@@ -232,7 +233,8 @@ Options for `create` (`zipshrink --help` lists them all):
 | Option | Meaning |
 |---|---|
 | `-l, --level 0-9` | 0 stores, 1 fastest, 6 default, 9 smallest |
-| `-p, --parts N` | split into N separate ZIP files |
+| `-p, --parts N` | split into N separate ZIP files of about equal size |
+| `-s, --part-size SIZE` | split into separate ZIP files of about SIZE each, e.g. `650M` or `2G` |
 | `--delete-originals` | delete each original after it is verified (asks to confirm; `-y` skips the question) |
 | `--min-free SIZE` | free space to keep on the destination, e.g. `2G` (default `256M`) |
 | `--quick-change-check` | before deleting, compare size, times and file id instead of re-reading the whole file |
@@ -253,17 +255,32 @@ journal damaged.
 
 ## Splitting into several ZIPs
 
-Set **Split into** in the app, or `--parts N` on the command line, to produce
-`NAME.part1.zip`, `NAME.part2.zip`, … Before starting, ZipShrink shows the
-number of files, the data, and the estimated and maximum size of every part.
+Choose **Split** in the app, or use the command line, to produce
+`NAME.part1.zip`, `NAME.part2.zip`, … in one of two ways:
+
+- **Into a number of files** (`--parts N`): N parts of about equal size.
+- **Into files of a size** (`--part-size SIZE`): you give the size of each
+  ZIP, such as `650 MB` or `2 GB`, and ZipShrink works out how many parts are
+  needed. It fills each part in order until the next file would take its
+  estimated compressed size over the limit. If everything fits in one ZIP of
+  that size, nothing is split.
+
+Before starting, ZipShrink shows the number of files, the data, and the
+estimated and maximum size of every part.
 
 ![Split preview](docs/screenshots/split-and-delete.png)
 
 Each part is a **complete, independent ZIP** — not a spanned `.z01` set — so
 each opens on its own, and extracting all of them into one folder rebuilds the
 original tree. Files are divided in order at file boundaries so the parts are
-as even as possible; a single file is never cut in two, so one very large file
-makes its part larger. Every part is its own crash-safe job, and `resume`
+as even as possible, or as full as the chosen size allows; a single file is
+never cut in two, so a file larger than the chosen size gets a ZIP of its
+own, and that ZIP is larger.
+
+The size limit uses the same estimate as the space check, measured by
+compressing samples of your files. Files that compress less well than the
+samples can make a part a little larger than the size chosen. The **At most**
+column shows the largest each part can be. Every part is its own crash-safe job, and `resume`
 continues all unfinished parts of a set.
 
 ## If something goes wrong

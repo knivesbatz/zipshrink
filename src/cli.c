@@ -21,6 +21,8 @@ static const char USAGE[] =
     "  -o, --output ZIP        the ZIP file to create\n"
     "  -l, --level N           0 stores, 1 is fastest, 9 is smallest (default 6)\n"
     "  -p, --parts N           split into N separate ZIP files of about equal size\n"
+    "  -s, --part-size SIZE    split into separate ZIP files of about SIZE each\n"
+    "                          (such as 650M or 2G); a file is never cut in two\n"
     "      --min-free SIZE     free space to keep on the destination (default 256M)\n"
     "      --delete-originals  permanently delete each original once its archived\n"
     "                          copy is verified on disk\n"
@@ -98,7 +100,7 @@ typedef struct {
     PtrVec pos;
     const char *output;
     int level, parts;
-    u64 min_free;
+    u64 min_free, part_size;
     int has_min_free;
     int del, yes, delro, quick_change, overwrite, no_final, ignore_space, quiet, verbose, no_delete, quick, check;
     u32 batch;
@@ -140,7 +142,11 @@ static int parse_args(int argc, char **argv, int first, Args *a) {
         } else if (!zs_strcmp(s, "-l") || !zs_strcmp(s, "--level")) {
             if (!need_value(argc, argv, &i, &v) || !parse_int("--level", v, 0, 9, &a->level)) return 0;
         } else if (!zs_strcmp(s, "-p") || !zs_strcmp(s, "--parts")) {
-            if (!need_value(argc, argv, &i, &v) || !parse_int("--parts", v, 1, 999, &a->parts)) return 0;
+            if (!need_value(argc, argv, &i, &v) || !parse_int("--parts", v, 1, ZS_MAX_PARTS, &a->parts)) return 0;
+        } else if (!zs_strcmp(s, "-s") || !zs_strcmp(s, "--part-size")) {
+            if (!need_value(argc, argv, &i, &v)) return 0;
+            if (!zs_parse_size(v, &a->part_size)) return zs_errf("error: --part-size: %s is not a size such as 650M or 2G\n", v), 0;
+            if (a->part_size < ZS_MIN_PART_SIZE) return err("--part-size should be at least 64K"), 0;
         } else if (!zs_strcmp(s, "--min-free")) {
             if (!need_value(argc, argv, &i, &v)) return 0;
             if (!zs_parse_size(v, &a->min_free)) return zs_errf("error: --min-free: %s is not a size such as 512M or 2G\n", v), 0;
@@ -168,6 +174,10 @@ static int parse_args(int argc, char **argv, int first, Args *a) {
             zs_errf("error: unknown option %s (see zipshrink --help)\n", s);
             return 0;
         }
+    }
+    if (a->part_size && a->parts > 1) {
+        err("use either --parts or --part-size, not both");
+        return 0;
     }
     if ((a->delro || a->quick_change) && !a->del) {
         err("--delete-readonly and --quick-change-check need --delete-originals");
@@ -248,14 +258,23 @@ static void print_preflight(const Preflight *p, const Scan *s) {
     zs_free(pct), zs_free(a), zs_free(b), zs_free(c), zs_free(f), zs_free(m);
 }
 
-static void print_parts(const Part *parts, int n) {
-    int i;
-    if (n <= 1) return;
+static void print_parts(const Part *parts, int n, u64 part_size) {
+    int i, over = 0;
+    if (n <= 1) {
+        if (part_size) zs_out("Everything fits in one ZIP file of that size, so it is not split.\n");
+        return;
+    }
     zs_outf("Split into %d separate ZIP files:\n", n);
     for (i = 0; i < n; i++) {
         char *b = zs_human(parts[i].bytes), *e = zs_human(parts[i].estimated), *w = zs_human(parts[i].worst);
         zs_outf("  %s  %U files, %s of data -> about %s (at most %s)\n", zs_basename(parts[i].output), parts[i].files, b, e, w);
         zs_free(b), zs_free(e), zs_free(w);
+        if (part_size && parts[i].files == 1 && parts[i].estimated > part_size) over++;
+    }
+    if (over) {
+        char *t = zs_human(part_size);
+        zs_outf("%d of them hold a single file larger than %s; a file is never cut in two.\n", over, t);
+        zs_free(t);
     }
 }
 
@@ -296,6 +315,8 @@ static int scan_and_check(const Args *a, const Options *o, Checked *c) {
     if (a->parts > 1) {
         if (!split_scan(&c->scan, c->paths.output, a->parts, c->pf.ratio_permille, &c->parts, &e)) return err(e), zs_free(e), EX_ERROR;
         c->nparts = a->parts;
+    } else if (a->part_size) {
+        if (!split_scan_size(&c->scan, c->paths.output, a->part_size, c->pf.ratio_permille, &c->parts, &c->nparts, &e)) return err(e), zs_free(e), EX_ERROR;
     }
     return EX_OK;
 }
@@ -321,7 +342,7 @@ static int cmd_check(const Args *a) {
     code = scan_and_check(a, &o, &c);
     if (code == EX_OK) {
         print_preflight(&c.pf, &c.scan);
-        print_parts(c.parts, c.nparts);
+        print_parts(c.parts, c.nparts, a->part_size);
         if (paths_unfinished(&c.paths)) {
             char *t = zs_fmt("an unfinished job exists for this archive: run zipshrink resume \"%s\"", c.paths.partial);
             warn(t), zs_free(t);
@@ -534,7 +555,7 @@ static int cmd_create(const Args *a) {
     if (code != EX_OK) return checked_free(&c), code;
     if (!a->quiet) {
         print_preflight(&c.pf, &c.scan);
-        print_parts(c.parts, c.nparts);
+        print_parts(c.parts, c.nparts, a->part_size);
     }
     if (c.pf.verdict == V_NO && !a->ignore_space) {
         err("not enough disk space; nothing was changed (use --ignore-space-check to try anyway; the job pauses safely if space runs out)");
