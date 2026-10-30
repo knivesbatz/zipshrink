@@ -24,6 +24,7 @@
 /* Wide-character entry points, resolved on NT only. */
 typedef HANDLE(WINAPI *CreateFileW_t)(const WCHAR *, DWORD, DWORD, void *, DWORD, DWORD, HANDLE);
 typedef DWORD(WINAPI *GetFileAttributesW_t)(const WCHAR *);
+typedef BOOL(WINAPI *SetFileAttributesW_t)(const WCHAR *, DWORD);
 typedef HANDLE(WINAPI *FindFirstFileW_t)(const WCHAR *, WIN32_FIND_DATAW *);
 typedef BOOL(WINAPI *FindNextFileW_t)(HANDLE, WIN32_FIND_DATAW *);
 typedef BOOL(WINAPI *PathW_t)(const WCHAR *);
@@ -38,6 +39,7 @@ static struct {
     int ready;
     CreateFileW_t CreateFileW;
     GetFileAttributesW_t GetFileAttributesW;
+    SetFileAttributesW_t SetFileAttributesW;
     FindFirstFileW_t FindFirstFileW;
     FindNextFileW_t FindNextFileW;
     PathW_t DeleteFileW, RemoveDirectoryW;
@@ -56,6 +58,7 @@ static int wide(void) {
         if (zs_is_nt()) {
             W.CreateFileW = (CreateFileW_t)zs_proc("kernel32.dll", "CreateFileW");
             W.GetFileAttributesW = (GetFileAttributesW_t)zs_proc("kernel32.dll", "GetFileAttributesW");
+            W.SetFileAttributesW = (SetFileAttributesW_t)zs_proc("kernel32.dll", "SetFileAttributesW");
             W.FindFirstFileW = (FindFirstFileW_t)zs_proc("kernel32.dll", "FindFirstFileW");
             W.FindNextFileW = (FindNextFileW_t)zs_proc("kernel32.dll", "FindNextFileW");
             W.DeleteFileW = (PathW_t)zs_proc("kernel32.dll", "DeleteFileW");
@@ -494,7 +497,7 @@ static void set_attrs(const char *path, u32 attrs) {
     zs_free(a);
 }
 
-DelResult plat_delete_verified(const char *path, const FStat *expected, const u8 *sha, int allow_readonly, char **why) {
+static DelResult delete_once(const char *path, const FStat *expected, const u8 *sha, int allow_readonly, char **why, int *denied) {
     HANDLE h;
     FStat now;
     *why = NULL;
@@ -517,6 +520,7 @@ DelResult plat_delete_verified(const char *path, const FStat *expected, const u8
             *why = zs_strdup("kept because another program has it open");
             return DEL_KEPT;
         }
+        *denied = e == ERROR_ACCESS_DENIED;
         *why = zs_fmt("kept because it could not be opened: %s", plat_error(e));
         return DEL_KEPT;
     }
@@ -603,6 +607,27 @@ DelResult plat_delete_verified(const char *path, const FStat *expected, const u8
         return DEL_KEPT;
     }
     return DEL_DELETED;
+}
+
+DelResult plat_delete_verified(const char *path, const FStat *expected, const u8 *sha, int allow_readonly, char **why) {
+    int denied = 0;
+    DelResult r = delete_once(path, expected, sha, allow_readonly, why, &denied);
+    /* Some systems (Wine without root) refuse DELETE access to a read-only
+     * file at open. Clear the attribute by name, try once more, and put it
+     * back if the file is kept. */
+    if (r == DEL_KEPT && denied && allow_readonly && wide() && W.SetFileAttributesW) {
+        WCHAR *w = wpath(path);
+        DWORD a = W.GetFileAttributesW(w);
+        if (a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_READONLY) && !(a & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) &&
+            W.SetFileAttributesW(w, (a & ~(DWORD)FILE_ATTRIBUTE_READONLY) ? (a & ~(DWORD)FILE_ATTRIBUTE_READONLY) : FILE_ATTRIBUTE_NORMAL)) {
+            zs_free(*why);
+            denied = 0;
+            r = delete_once(path, expected, sha, allow_readonly, why, &denied);
+            if (r == DEL_KEPT) W.SetFileAttributesW(w, a);
+        }
+        zs_free(w);
+    }
+    return r;
 }
 
 int plat_delete_file(const char *path) {
