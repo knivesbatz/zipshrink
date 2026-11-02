@@ -91,6 +91,33 @@ static void test_sums(void) {
     CHECK(update_expected_hash(sums, "ZipShrink-setup.exe", h) && h[1] == 0x11 && h[31] == 0xff);
     CHECK(!update_expected_hash(sums, "ZipShrink-setup", h));
     CHECK(update_expected_hash(sums, "other.zip", h) && h[0] == 0xcd);
+    /* GitHub's release JSON: each asset's digest belongs to that asset. */
+    {
+        static const char json[] =
+            "{\"tag_name\": \"v9.1.0\", \"assets\": ["
+            "{\"name\": \"SHA256SUMS\", \"digest\": \"sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\","
+            " \"browser_download_url\": \"https://github.com/o/r/releases/download/v9.1.0/SHA256SUMS\"},"
+            "{\"name\": \"ZipShrink-setup.exe\", \"digest\": \"sha256:00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff\","
+            " \"browser_download_url\": \"https://github.com/o/r/releases/download/v9.1.0/ZipShrink-setup.exe\"}],"
+            " \"body\": \"notes\"}";
+        static const char old[] =
+            "{\"tag_name\": \"v0.3.0\", \"assets\": ["
+            "{\"name\": \"SHA256SUMS\", \"digest\": \"sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\","
+            " \"browser_download_url\": \"https://x/SHA256SUMS\"},"
+            "{\"name\": \"ZipShrink-setup.exe\", \"digest\": null, \"browser_download_url\": \"https://x/ZipShrink-setup.exe\"}]}";
+        Release r;
+        char *e = NULL;
+        CHECK(update_parse_release(json, &r, &e));
+        CHECK(!zs_strcmp(r.version, "9.1.0") && r.installer_url && r.sums_url);
+        CHECK(r.has_sha && r.sha[1] == 0x11 && r.sha[31] == 0xff);
+        release_free(&r);
+        /* No digest of its own: the SHA256SUMS asset's must not be used. */
+        CHECK(update_parse_release(old, &r, &e));
+        CHECK(r.installer_url && r.sums_url && !r.has_sha);
+        release_free(&r);
+        CHECK(!update_parse_release("{}", &r, &e));
+        zs_free(e);
+    }
 }
 
 static void test_journal(void) {

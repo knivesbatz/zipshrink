@@ -23,7 +23,7 @@ BEGIN
   POPUP "&Tools"
   BEGIN
     MENUITEM "Check for &Updates...", IDM_UPDATE
-    MENUITEM "Check for Updates at &Startup", IDM_AUTOUPDATE
+    MENUITEM "Update &Automatically", IDM_AUTOUPDATE
   END
   POPUP "&Help"
   BEGIN

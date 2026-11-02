@@ -135,16 +135,27 @@ for the full design and its limits — including what is weaker on Windows
 
 ## Install
 
-From the [latest release](https://github.com/knivesbatz/zipshrink/releases/latest):
+Download **`ZipShrink-setup.exe`** from the
+[latest release](https://github.com/knivesbatz/zipshrink/releases/latest) and
+run it. That one file is all you need, on any Windows from 95 to 11. ZipShrink
+then [keeps itself up to date](#updates).
 
-| File | What it is |
-|---|---|
-| `ZipShrink-setup.exe` | Installer for Windows 95 through 11. On Windows 2000 and later it installs for your user account (no administrator rights needed); on 95, 98, Me and NT 4 it installs into Program Files. Adds a Start menu entry, an optional "Compress with ZipShrink…" right-click menu, and (2000 and later) the `zipshrink` command. |
-| `ZipShrink.msi` | The same programs as a per-machine Windows Installer package, for IT deployment: `msiexec /i ZipShrink.msi /qn`. Needs Windows Installer 2.0 or later (built into Me, 2000 SP3, XP and later; a free download for 95, 98 and NT 4). |
+- On Windows 2000 and later it installs for your user account, with no
+  administrator rights needed. On 95, 98, Me and NT 4 it installs into
+  Program Files.
+- It adds a Start menu entry, an optional "Compress with ZipShrink…"
+  right-click menu and desktop icon, and, on 2000 and later, the `zipshrink`
+  command.
+- For silent installs: `ZipShrink-setup.exe /S`.
 
 The programs are not code-signed yet, so Windows SmartScreen may say "Windows
-protected your PC": choose **More info**, then **Run anyway**. Every release
-lists SHA-256 checksums in `SHA256SUMS`.
+protected your PC": choose **More info**, then **Run anyway**. (The
+`SHA256SUMS` file next to the installer is for the updater of ZipShrink 0.2
+and 0.3; you do not need it.)
+
+Installed ZipShrink from `ZipShrink.msi` (0.1 to 0.3)? Run the new setup: it
+removes the MSI copy, after Windows asks for permission, so only one
+ZipShrink remains.
 
 Upgrading from 0.1.x: download and run the new setup (0.1's built-in
 updater does not find 0.2); it installs into the same folder.
@@ -298,15 +309,27 @@ continues all unfinished parts of a set.
 
 ## Updates
 
-The app checks GitHub for a newer release at most once a day (turn this off
-under **Tools → Check for Updates at Startup**); it only mentions a new
-version in the status bar. It never installs anything by itself: when you
-choose **Tools → Check for Updates…** and agree, it downloads the installer,
-checks its SHA-256 against the `SHA256SUMS` file published with the release,
-and runs it. From the command
-line: `zipshrink update` (or `zipshrink update --check`). Updates are never
-installed while a job is running. Windows 95/98/Me and NT 4 cannot reach
-GitHub (see above).
+ZipShrink updates itself. Once a week it checks GitHub for a newer release,
+when it starts or while it stays open. When it finds one:
+
+1. It downloads the new installer in the background and checks its SHA-256
+   against the one GitHub records for the file. A file that does not match
+   is deleted, and nothing is installed.
+2. It asks whether to install now. If you choose **Yes**, ZipShrink closes,
+   updates in a few seconds without any setup screens, and opens again. If
+   you choose **No**, or a job is running, the update installs when you close
+   ZipShrink.
+
+The update goes into the same folder and keeps your choices, such as no
+desktop icon. **Tools → Check for Updates…** checks right away, and
+**Tools → Update Automatically** turns the weekly check off. From the command
+line, `zipshrink update` installs the newest version and
+`zipshrink update --check` only reports it.
+
+- **Coming from 0.2 or 0.3:** those versions only show new releases in the
+  status bar. Choose **Tools → Check for Updates…** once; after that,
+  updates arrive by themselves.
+- **Windows 95/98/Me and NT 4:** these cannot reach GitHub (see above).
 
 ## Limitations
 
@@ -325,7 +348,7 @@ from Windows (MSYS2):
 make                      # build/zipshrink.exe and build/zipshrink-gui.exe
 make test                 # the test suite (Windows, or Wine elsewhere)
 make check-imports        # every imported function exists on Windows 95
-packaging/build-windows.sh   # installer and MSI in dist/
+packaging/build-windows.sh   # dist/ZipShrink-setup.exe
 ```
 
 See [docs/BUILDING.md](docs/BUILDING.md).

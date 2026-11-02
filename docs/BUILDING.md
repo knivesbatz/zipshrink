@@ -9,7 +9,7 @@
     `make CROSS=` from a MINGW32 shell, or keep the default `CROSS` prefix
     if your toolchain uses it.
 * For the test suite on Linux: 32-bit Wine (`sudo dpkg --add-architecture i386 && sudo apt install wine32:i386 wine`).
-* For packages: NSIS 3 (`makensis`) and msitools (`wixl`).
+* For the installer: NSIS 3 (`makensis`).
 
 No other libraries are needed: the programs use only Windows itself and the
 vendored miniz.
@@ -47,9 +47,9 @@ builds never contain it.
 packaging/build-windows.sh    # writes dist/
 ```
 
-Produces `ZipShrink-setup.exe` (ANSI NSIS installer for Windows 95–11) and
-`ZipShrink.msi` (schema 200, per machine). The release
-workflow uses exactly this script.
+Produces `ZipShrink-setup.exe`, an ANSI NSIS installer for Windows 95–11.
+It is the only file a release needs; the release workflow uses exactly this
+script.
 
 ## Regenerating the icon
 
@@ -61,5 +61,6 @@ python3 scripts/make_icon.py    # assets/zipshrink.ico (16-colour and 32-bit BMP
 
 1. Change the version in `src/version.h`.
 2. Merge to `main`, then run the **Release** workflow with the tag
-   `vX.Y.Z` (or push the tag). It builds the packages, writes `SHA256SUMS`,
-   and publishes a GitHub release; the updater picks it up from there.
+   `vX.Y.Z` (or push the tag). It builds the installer, adds `SHA256SUMS`
+   (for the updater of 0.2 and 0.3), and publishes a GitHub release. Installed
+   copies find it within a week and update themselves.
