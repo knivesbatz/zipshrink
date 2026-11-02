@@ -821,8 +821,8 @@ static int cmd_update(const Args *a) {
         err(e), zs_free(e), release_free(&rel);
         return EX_ERROR;
     }
-    zs_errf("\nVerified the SHA-256 of %s; starting the installer.\n", path);
-    if (!update_launch(path, &e)) {
+    zs_errf("\nVerified the SHA-256 of %s.\nInstalling ZipShrink %s in the background; it takes a few seconds.\n", path, rel.version);
+    if (!update_launch(path, 0, &e)) {
         err(e), zs_free(e), zs_free(path), release_free(&rel);
         return EX_ERROR;
     }

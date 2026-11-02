@@ -23,7 +23,7 @@ src/
 vendor/miniz/   miniz 3.0.2 deflate and inflate (MIT)
 res/            resources: menu, consent dialog, icon, version, manifest
 tests/          run.py (end-to-end, fault and crash tests), tests.c (in-process)
-packaging/      NSIS installer, MSI (wixl), build script
+packaging/      NSIS installer, build script
 scripts/        Windows 95 import check, icon generator
 ```
 
@@ -152,7 +152,21 @@ reports that operation); nothing animates on its own.
 
 Loads WinINet at run time, asks
 `https://api.github.com/repos/knivesbatz/zipshrink/releases/latest` for the
-newest release, compares versions, downloads `SHA256SUMS` and
-`ZipShrink-setup.exe`, checks the SHA-256 and starts the installer. A copy
-run from a folder holding `zipshrink-portable.txt` opens the release page
-instead. It never installs silently or while a job runs.
+newest release and compares versions. It then downloads
+`ZipShrink-setup.exe` to the temporary folder and checks its SHA-256 against
+the `digest` GitHub records for that asset. It falls back to the release's
+`SHA256SUMS` only when there is no digest.
+
+It starts the installer as `ZipShrink-setup.exe /S /RESTART`. Setup waits up
+to 30 seconds for the running copy to close, upgrades in place, keeps the
+optional parts the earlier installation had, and starts ZipShrink again.
+
+The window checks once a week (`UPDATE_INTERVAL`, recorded in
+`LastUpdateCheck`). It downloads without asking, then asks whether to install
+now or when ZipShrink closes. It never installs while a job runs. A copy run
+from a folder holding `zipshrink-portable.txt` opens the release page
+instead.
+
+CI builds `build-old/zipshrink.exe` with `ZS_UPDATE_FROM="0.0.1"`, so
+`zipshrink update` downloads, verifies and installs the published release on
+a real Windows runner.
