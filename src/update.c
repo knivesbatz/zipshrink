@@ -181,36 +181,58 @@ int version_newer(const char *a, const char *b) {
     return 0;
 }
 
+static int hex_digit(char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1; }
+
+static int parse_hex32(const char *h, u8 out[32]) {
+    int i;
+    for (i = 0; i < 64; i++)
+        if (hex_digit(h[i]) < 0) return 0;
+    if (hex_digit(h[64]) >= 0) return 0;
+    for (i = 0; i < 32; i++) out[i] = (u8)(hex_digit(h[2 * i]) << 4 | hex_digit(h[2 * i + 1]));
+    return 1;
+}
+
+int update_parse_release(const char *json, Release *r, char **err) {
+    static const char KEY[] = "\"browser_download_url\"";
+    const char *p = json, *seg = json, *k;
+    memset(r, 0, sizeof(*r));
+    r->tag = json_value(json, "tag_name", NULL);
+    if (!r->tag) return *err = zs_strdup("GitHub's answer did not name a release"), 0;
+    r->version = zs_strdup(r->tag[0] == 'v' ? r->tag + 1 : r->tag);
+    r->page = zs_fmt("https://github.com/" UPDATE_REPO "/releases/tag/%s", r->tag);
+    /* Each asset's fields, its "digest" among them, come before its
+     * browser_download_url, which ends the asset. */
+    while ((k = zs_strstr(p, KEY)) != NULL) {
+        char *url = json_value(k, "browser_download_url", &p);
+        const char *base, *s;
+        if (!url) break;
+        base = url;
+        for (s = url; *s; s++)
+            if (*s == '/') base = s + 1;
+        if (!zs_strcmp(base, UPDATE_INSTALLER) && !r->installer_url) {
+            char *fields = zs_strndup(seg, (size_t)(k - seg)), *d = json_value(fields, "digest", NULL);
+            if (d && !zs_strncmp(d, "sha256:", 7) && parse_hex32(d + 7, r->sha)) r->has_sha = 1;
+            zs_free(d), zs_free(fields);
+            r->installer_url = url;
+        } else if (!zs_strcmp(base, UPDATE_CHECKSUMS) && !r->sums_url) r->sums_url = url;
+        else zs_free(url);
+        seg = p;
+    }
+    return 1;
+}
+
 int update_check(Release *r, int *newer, char **err) {
     Collect c;
-    const char *p;
-    char *url;
+    int ok;
     memset(r, 0, sizeof(*r));
     memset(&c, 0, sizeof(c));
     c.limit = 4 << 20, c.err = err;
     *newer = 0;
     if (!http_get("https://api.github.com/repos/" UPDATE_REPO "/releases/latest", "Accept: application/vnd.github+json\r\n", collect, &c, err)) return buf_free(&c.b), 0;
-    buf_cstr(&c.b);
-    r->tag = json_value(c.b.p, "tag_name", NULL);
-    if (!r->tag) {
-        buf_free(&c.b);
-        return *err = zs_strdup("GitHub's answer did not name a release"), 0;
-    }
-    r->version = zs_strdup(r->tag[0] == 'v' ? r->tag + 1 : r->tag);
-    r->page = zs_fmt("https://github.com/" UPDATE_REPO "/releases/tag/%s", r->tag);
-    p = c.b.p;
-    while ((url = json_value(p, "browser_download_url", &p)) != NULL) {
-        const char *base = url;
-        const char *s;
-        for (s = url; *s; s++)
-            if (*s == '/') base = s + 1;
-        if (!zs_strcmp(base, UPDATE_INSTALLER) && !r->installer_url) r->installer_url = url;
-        else if (!zs_strcmp(base, UPDATE_CHECKSUMS) && !r->sums_url) r->sums_url = url;
-        else zs_free(url);
-    }
+    ok = update_parse_release(buf_cstr(&c.b), r, err);
     buf_free(&c.b);
-    *newer = version_newer(r->version, ZS_VERSION);
-    return 1;
+    if (ok) *newer = version_newer(r->version, ZS_UPDATE_FROM);
+    return ok;
 }
 
 static char *exe_dir(void) {
@@ -234,8 +256,6 @@ int update_can_install(void) {
     zs_free(m), zs_free(d);
     return !portable;
 }
-
-static int hex_digit(char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1; }
 
 int update_expected_hash(const char *sums, const char *name, u8 out[32]) {
     const char *line = sums;
@@ -290,15 +310,19 @@ int update_download(const Release *r, char **path, DownloadCb cb, void *ctx, cha
     char tmp[MAX_PATH + 1], *dir, *name, *full;
     DWORD n;
     *path = NULL;
-    if (!r->installer_url || !r->sums_url) return *err = zs_fmt("release %s has no %s or %s", r->tag, UPDATE_INSTALLER, UPDATE_CHECKSUMS), 0;
-    memset(&c, 0, sizeof(c));
-    c.limit = 1 << 20, c.err = err;
-    if (!http_get(r->sums_url, NULL, collect, &c, err)) return buf_free(&c.b), 0;
-    if (!update_expected_hash(buf_cstr(&c.b), UPDATE_INSTALLER, want)) {
+    if (!r->installer_url) return *err = zs_fmt("release %s has no %s", r->tag, UPDATE_INSTALLER), 0;
+    if (r->has_sha) memcpy(want, r->sha, 32);
+    else if (!r->sums_url) return *err = zs_fmt("release %s publishes no SHA-256 for %s", r->tag, UPDATE_INSTALLER), 0;
+    else {
+        memset(&c, 0, sizeof(c));
+        c.limit = 1 << 20, c.err = err;
+        if (!http_get(r->sums_url, NULL, collect, &c, err)) return buf_free(&c.b), 0;
+        if (!update_expected_hash(buf_cstr(&c.b), UPDATE_INSTALLER, want)) {
+            buf_free(&c.b);
+            return *err = zs_fmt("%s does not list %s", UPDATE_CHECKSUMS, UPDATE_INSTALLER), 0;
+        }
         buf_free(&c.b);
-        return *err = zs_fmt("%s does not list %s", UPDATE_CHECKSUMS, UPDATE_INSTALLER), 0;
     }
-    buf_free(&c.b);
     n = GetTempPathA(MAX_PATH, tmp);
     if (!n || n >= MAX_PATH) return *err = zs_strdup("cannot find the temporary folder"), 0;
     tmp[n] = 0;
@@ -334,14 +358,14 @@ int update_download(const Release *r, char **path, DownloadCb cb, void *ctx, cha
     return 1;
 }
 
-int update_launch(const char *path, char **err) {
+int update_launch(const char *path, int restart, char **err) {
     STARTUPINFOA si;
     PROCESS_INFORMATION pi;
     int lossy = 0;
     char *a = zs_utf8_to_acp(path, &lossy), *cmd;
     BOOL ok;
     if (lossy) return zs_free(a), *err = zs_fmt("cannot start %s: its name cannot be represented on this system", path), 0;
-    cmd = zs_fmt("\"%s\"", a);
+    cmd = zs_fmt("\"%s\" /S%s", a, restart ? " /RESTART" : "");
     memset(&si, 0, sizeof(si));
     si.cb = sizeof(si);
     ok = CreateProcessA(a, cmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);

@@ -14,13 +14,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-i686 binutils-mingw-w64-i686 nsis wixl
+      - run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-i686 binutils-mingw-w64-i686 nsis
       - name: Programs, test programs and packages
         run: |
           make -j4 B=build all build/zipshrink-fp.exe build/zs-tests.exe
+          make B=build-old EXTRA_CFLAGS='-DZS_UPDATE_FROM=\"0.0.1\"' build-old/zipshrink.exe
           packaging/build-windows.sh
-        env:
-          ZIPSHRINK_UPDATE_REPO: ${{ github.repository }}
       - name: Every import exists on Windows 95
         run: python3 scripts/check_imports.py build/zipshrink.exe build/zipshrink-gui.exe build/zipshrink-fp.exe build/zs-tests.exe
       - uses: actions/upload-artifact@v7
@@ -28,6 +27,7 @@ jobs:
           name: build
           path: |
             build/*.exe
+            build-old/zipshrink.exe
             dist/
 
   test-wine:
@@ -92,24 +92,67 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with: { name: build }
-      - name: Setup installs, runs and uninstalls silently
+      - name: Setup replaces a copy installed from the 0.3 MSI
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          gh release download v0.3.0 --repo ${{ github.repository }} --pattern ZipShrink.msi --dir old
+          $p = Start-Process msiexec -ArgumentList '/i','old\ZipShrink.msi','/qn' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "old msi failed: $($p.ExitCode)" }
+          $msi = "${env:ProgramFiles(x86)}\ZipShrink\zipshrink.exe"
+          if (-not (Test-Path $msi)) { throw "old msi did not install" }
           $p = Start-Process dist\ZipShrink-setup.exe -ArgumentList '/S' -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "setup failed: $($p.ExitCode)" }
-          $dir = "$env:LOCALAPPDATA\Programs\ZipShrink"
-          & "$dir\zipshrink.exe" --version
+          Start-Sleep -Seconds 3
+          if (Test-Path $msi) { throw "the MSI copy was not removed" }
+          & "$env:LOCALAPPDATA\Programs\ZipShrink\zipshrink.exe" --version
           if ($LASTEXITCODE -ne 0) { throw "zipshrink --version failed" }
-          if (-not (Test-Path "$dir\zipshrink-gui.exe")) { throw "gui missing" }
+      - name: A silent upgrade keeps the choices made before
+        shell: pwsh
+        run: |
+          $desk = [Environment]::GetFolderPath('Desktop') + '\ZipShrink.lnk'
+          if (-not (Test-Path $desk)) { throw "no desktop shortcut after the first install" }
+          Remove-Item $desk
+          $p = Start-Process dist\ZipShrink-setup.exe -ArgumentList '/S' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "upgrade failed: $($p.ExitCode)" }
+          if (Test-Path $desk) { throw "the upgrade put back the desktop shortcut" }
+      - name: The updater's install waits for ZipShrink to close and starts it again
+        shell: pwsh
+        run: |
+          $dir = "$env:LOCALAPPDATA\Programs\ZipShrink"
+          $gui = Start-Process "$dir\zipshrink-gui.exe" -PassThru
+          Start-Sleep -Seconds 3
+          $setup = Start-Process dist\ZipShrink-setup.exe -ArgumentList '/S','/RESTART' -PassThru
+          Start-Sleep -Seconds 3
+          if ($setup.HasExited) { throw "setup did not wait for ZipShrink to close" }
+          Stop-Process -Id $gui.Id
+          $setup.WaitForExit(60000) | Out-Null
+          if ($setup.ExitCode -ne 0) { throw "setup failed: $($setup.ExitCode)" }
+          Start-Sleep -Seconds 3
+          $again = Get-Process zipshrink-gui -ErrorAction SilentlyContinue
+          if (-not $again) { throw "ZipShrink was not started again" }
+          $again | Stop-Process
+      - name: Uninstall
+        shell: pwsh
+        run: |
+          $dir = "$env:LOCALAPPDATA\Programs\ZipShrink"
           $p = Start-Process "$dir\Uninstall.exe" -ArgumentList '/S',"_?=$dir" -Wait -PassThru
           Start-Sleep -Seconds 3
           if (Test-Path "$dir\zipshrink.exe") { throw "uninstall left files" }
-      - name: MSI installs and uninstalls silently
+      - name: The updater downloads, checks and installs the latest release
         shell: pwsh
         run: |
-          $p = Start-Process msiexec -ArgumentList '/i','dist\ZipShrink.msi','/qn','/l*v','msi.log' -Wait -PassThru
-          if ($p.ExitCode -ne 0) { Get-Content msi.log -Tail 50; throw "msi failed: $($p.ExitCode)" }
-          & "${env:ProgramFiles(x86)}\ZipShrink\zipshrink.exe" --version
-          if ($LASTEXITCODE -ne 0) { throw "zipshrink --version failed" }
-          $p = Start-Process msiexec -ArgumentList '/x','dist\ZipShrink.msi','/qn' -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw "msi uninstall failed: $($p.ExitCode)" }
+          # A copy that claims to be 0.0.1, so the published release is newer.
+          $out = & build-old\zipshrink.exe update 2>&1 | Out-String
+          Write-Output $out
+          if ($out -match 'limiting requests') { Write-Output "::warning::GitHub rate limit; updater test skipped"; exit 0 }
+          if ($LASTEXITCODE -ne 0) { throw "zipshrink update failed" }
+          if ($out -notmatch 'Verified the SHA-256') { throw "the download was not verified" }
+          $tag = (Invoke-RestMethod https://api.github.com/repos/${{ github.repository }}/releases/latest).tag_name
+          $exe = "$env:LOCALAPPDATA\Programs\ZipShrink\zipshrink.exe"
+          for ($i = 0; $i -lt 60 -and -not (Test-Path $exe); $i++) { Start-Sleep -Seconds 1 }
+          Start-Sleep -Seconds 5
+          $v = & $exe --version
+          Write-Output $v
+          if ($v -notmatch [regex]::Escape($tag.TrimStart('v'))) { throw "installed '$v', expected $tag" }
