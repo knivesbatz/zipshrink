@@ -6,7 +6,11 @@
 ; used, so it upgrades them in place. On Windows 95, 98, Me and NT 4, which
 ; have no per-user program folders, it installs into Program Files.
 ;
-; Build: makensis -DVERSION=0.2.0 -DBINDIR=path\to\exes -DOUTFILE=ZipShrink-setup.exe zipshrink.nsi
+; ZipShrink's updater runs it as `ZipShrink-setup.exe /S [/RESTART]`: silent,
+; it waits for ZipShrink to close, keeps the choices of the earlier
+; installation, and with /RESTART starts ZipShrink again afterwards.
+;
+; Build: makensis -DVERSION=0.4.0 -DBINDIR=path\to\exes -DOUTFILE=ZipShrink-setup.exe zipshrink.nsi
 
 Unicode false
 SetCompressor /SOLID lzma
@@ -25,12 +29,15 @@ ManifestSupportedOS all
 
 !define APP "ZipShrink"
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\ZipShrink"
+; The Windows Installer package of versions 0.1 to 0.3.
+!define MSI_UPGRADE_CODE "{6B0E2F9A-3C41-4E7B-9F0D-2A5C8E1B7D34}"
 
 !include "MUI2.nsh"
 !include "WinVer.nsh"
 !include "LogicLib.nsh"
 !include "Sections.nsh"
 !include "StrFunc.nsh"
+!include "FileFunc.nsh"
 ${StrStr}
 ${UnStrRep}
 
@@ -79,10 +86,33 @@ Function un.onInit
   !insertmacro DetectScope
 FunctionEnd
 
+; Waits up to 30 seconds for a running copy of FILE to close.
+!macro WaitUnlocked FILE
+  StrCpy $R1 0
+  ${Do}
+    ${IfNot} ${FileExists} "${FILE}"
+      ${Break}
+    ${EndIf}
+    ClearErrors
+    FileOpen $R0 "${FILE}" a
+    ${IfNot} ${Errors}
+      FileClose $R0
+      ${Break}
+    ${EndIf}
+    IntOp $R1 $R1 + 1
+    ${If} $R1 >= 60
+      ${Break}
+    ${EndIf}
+    Sleep 500
+  ${Loop}
+!macroend
+
 Section "ZipShrink (required)" SecMain
   SectionIn RO
   SetOutPath "$INSTDIR"
-  ; A running copy would lock the files; the updater closes the app first.
+  ; The updater starts setup and then closes ZipShrink.
+  !insertmacro WaitUnlocked "$INSTDIR\zipshrink-gui.exe"
+  !insertmacro WaitUnlocked "$INSTDIR\zipshrink.exe"
   File "${BINDIR}\zipshrink-gui.exe"
   File "${BINDIR}\zipshrink.exe"
   File /oname=LICENSE.txt "..\..\LICENSE"
@@ -103,6 +133,13 @@ Section "ZipShrink (required)" SecMain
   WriteRegStr SHCTX "${UNINST_KEY}" "QuietUninstallString" '"$INSTDIR\Uninstall.exe" /S'
   WriteRegDWORD SHCTX "${UNINST_KEY}" "NoModify" 1
   WriteRegDWORD SHCTX "${UNINST_KEY}" "NoRepair" 1
+  ; Versions 0.1 to 0.3 also came as an MSI; remove such a copy so only one
+  ; ZipShrink remains (Windows asks for permission: it was per machine).
+  System::Call 'msi::MsiEnumRelatedProductsA(t "${MSI_UPGRADE_CODE}", i 0, i 0, t .r1) i .r0'
+  ${If} $0 == 0
+    DetailPrint "Removing the earlier ZipShrink installed from ZipShrink.msi..."
+    ExecWait '"$SYSDIR\msiexec.exe" /x $1 /qb-' $0
+  ${EndIf}
 SectionEnd
 
 !macro MenuEntry ROOT KEY
@@ -147,10 +184,27 @@ SectionEnd
 ; After the sections, so their indexes are defined.
 Function .onInit
   !insertmacro DetectScope
-  ; An earlier installation decides the folder (upgrade in place).
+  ; An earlier installation decides the folder (upgrade in place) and which
+  ; optional parts stay: an upgrade adds nothing that was left out.
   ReadRegStr $0 SHCTX "Software\ZipShrink" "InstallDir"
   ${If} $0 != ""
     StrCpy $INSTDIR $0
+    ${IfNot} ${FileExists} "$DESKTOP\ZipShrink.lnk"
+      !insertmacro UnselectSection ${SecDesktop}
+    ${EndIf}
+    ${If} $PerUser == 1
+      ReadRegStr $1 HKCU "Software\Classes\Directory\shell\ZipShrink\command" ""
+    ${Else}
+      ReadRegStr $1 HKCR "Directory\shell\ZipShrink\command" ""
+    ${EndIf}
+    ${If} $1 == ""
+      !insertmacro UnselectSection ${SecMenu}
+    ${EndIf}
+    ReadRegStr $1 HKCU "Environment" "Path"
+    ${StrStr} $2 "$1" "$INSTDIR"
+    ${If} $2 == ""
+      !insertmacro UnselectSection ${SecPath}
+    ${EndIf}
   ${ElseIf} $PerUser == 1
     StrCpy $INSTDIR "$LOCALAPPDATA\Programs\ZipShrink"
   ${EndIf}
@@ -158,6 +212,15 @@ Function .onInit
   ${IfNot} ${IsNT}
     !insertmacro UnselectSection ${SecPath}
     !insertmacro SetSectionFlag ${SecPath} ${SF_RO}
+  ${EndIf}
+FunctionEnd
+
+Function .onInstSuccess
+  ${GetParameters} $0
+  ClearErrors
+  ${GetOptions} $0 "/RESTART" $1
+  ${IfNot} ${Errors}
+    Exec '"$INSTDIR\zipshrink-gui.exe"'
   ${EndIf}
 FunctionEnd
 

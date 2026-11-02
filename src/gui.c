@@ -169,6 +169,7 @@ static struct {
     int done_list;
     /* updates */
     int checking_update, manual_update;
+    int downloading, dl_manual, install_on_exit;
     Release rel;
     char *dl_path, *dl_error;
 } A;
@@ -1332,6 +1333,81 @@ static DWORD WINAPI download_thread(void *arg) {
     return 0;
 }
 
+/* Updates install themselves: a newer release is downloaded in the
+ * background and checked against its published SHA-256, then installed
+ * silently (asking first when the check was automatic). The installer
+ * waits for ZipShrink to close and starts it again. */
+static void install_update(int restart) {
+    char *e = NULL;
+    if (update_launch(A.dl_path, restart, &e)) {
+        A.install_on_exit = 0;
+        if (restart) DestroyWindow(A.w);
+    } else if (restart) {
+        msg(e, MB_ICONSTOP);
+    }
+    zs_free(e);
+}
+
+static void on_download_done(void) {
+    A.downloading = 0;
+    if (!A.dl_path) {
+        if (A.dl_manual) msg(A.dl_error ? A.dl_error : "The download failed.", MB_ICONSTOP);
+        else {
+            char *t = zs_fmt("The update could not be downloaded: %s", A.dl_error ? A.dl_error : "unknown error");
+            status_text(t);
+            zs_free(t);
+        }
+        zs_free(A.dl_error), A.dl_error = NULL;
+        if (A.dl_manual) status_text("Ready");
+        return;
+    }
+    if (A.running) {
+        char *t = zs_fmt("ZipShrink %s is ready and will be installed when you close ZipShrink.", A.rel.version);
+        A.install_on_exit = 1;
+        status_text(t);
+        zs_free(t);
+        return;
+    }
+    if (!A.dl_manual) {
+        char *t = zs_fmt("ZipShrink %s has been downloaded and checked (you have %s).\r\n\r\nInstall it now? ZipShrink closes for a moment and starts again.\r\n\r\n"
+                         "Choose No to install it when you close ZipShrink.",
+                         A.rel.version, ZS_VERSION);
+        int yes = ask(t, MB_ICONQUESTION);
+        zs_free(t);
+        if (!yes) {
+            t = zs_fmt("ZipShrink %s will be installed when you close ZipShrink.", A.rel.version);
+            A.install_on_exit = 1;
+            status_text(t);
+            zs_free(t);
+            return;
+        }
+    }
+    status_text("Installing the update...");
+    install_update(1);
+}
+
+static void start_download(int manual) {
+    DWORD tid;
+    HANDLE th;
+    char *t;
+    if (A.downloading) return;
+    if (A.dl_path) {
+        A.dl_manual = manual;
+        on_download_done();
+        return;
+    }
+    A.downloading = 1, A.dl_manual = manual;
+    th = CreateThread(NULL, 0, download_thread, NULL, 0, &tid);
+    if (!th) {
+        A.downloading = 0;
+        return;
+    }
+    CloseHandle(th);
+    t = zs_fmt("Downloading ZipShrink %s...", A.rel.version);
+    status_text(t);
+    zs_free(t);
+}
+
 static void on_update_result(WPARAM kind, LPARAM lp) {
     A.checking_update = 0;
     if (kind == 0) {
@@ -1354,49 +1430,40 @@ static void on_update_result(WPARAM kind, LPARAM lp) {
             release_free(r), zs_free(r);
             return;
         }
+        if (A.downloading || (A.dl_path && A.rel.tag && !zs_strcmp(A.rel.tag, r->tag))) {
+            /* Already on its way. */
+            release_free(r), zs_free(r);
+            if (A.manual_update && A.dl_path) start_download(1);
+            return;
+        }
         release_free(&A.rel);
         A.rel = *r;
         zs_free(r);
-    }
-    if (!A.manual_update) {
-        char *t = zs_fmt("ZipShrink %s is available - Tools > Check for Updates", A.rel.version);
-        status_text(t);
-        zs_free(t);
-        return;
+        zs_free(A.dl_path), A.dl_path = NULL;
+        A.install_on_exit = 0;
     }
     if (!update_can_install()) {
         char *t = zs_fmt("ZipShrink %s is available.\r\n\r\nThis is a portable copy, so download the new version from the release page. Open it now?", A.rel.version);
-        if (ask(t, MB_ICONQUESTION)) update_open_url(A.rel.page);
+        if (!A.manual_update) {
+            zs_free(t);
+            t = zs_fmt("ZipShrink %s is available on the release page (Tools > Check for Updates).", A.rel.version);
+            status_text(t);
+        } else if (ask(t, MB_ICONQUESTION))
+            update_open_url(A.rel.page);
         zs_free(t);
         return;
     }
-    {
-        char *t = zs_fmt("ZipShrink %s is available (you have %s).\r\n\r\nDownload it, check its SHA-256 against the published checksums, and run the installer now?", A.rel.version,
-                         ZS_VERSION);
+    if (A.manual_update) {
+        char *t = zs_fmt("ZipShrink %s is available (you have %s).\r\n\r\nDownload it, check its SHA-256, and install it now? ZipShrink closes for a moment and starts again.",
+                         A.rel.version, ZS_VERSION);
         int yes = ask(t, MB_ICONQUESTION);
         zs_free(t);
-        if (!yes) return;
+        if (!yes) {
+            status_text("Ready");
+            return;
+        }
     }
-    if (A.running) return msg("Wait for the current job to finish (or pause it) before updating.", MB_ICONINFORMATION);
-    {
-        DWORD tid;
-        HANDLE th = CreateThread(NULL, 0, download_thread, NULL, 0, &tid);
-        if (th) CloseHandle(th);
-        status_text("Downloading the update...");
-    }
-}
-
-static void on_download_done(void) {
-    char *e = NULL;
-    if (!A.dl_path) {
-        msg(A.dl_error ? A.dl_error : "The download failed.", MB_ICONSTOP);
-        zs_free(A.dl_error), A.dl_error = NULL;
-        status_text("Ready");
-        return;
-    }
-    msg("The installer was downloaded and its SHA-256 matches the published checksum. ZipShrink will now close and start it.", MB_ICONINFORMATION);
-    if (update_launch(A.dl_path, &e)) DestroyWindow(A.w);
-    else msg(e, MB_ICONSTOP), zs_free(e);
+    start_download(A.manual_update);
 }
 
 static void about(void) {
@@ -1571,6 +1638,7 @@ static LRESULT CALLBACK wnd_proc(HWND hw, UINT m, WPARAM wp, LPARAM lp) {
             KillTimer(hw, 3);
             check_updates(0);
         }
+        if (wp == 4 && uw_setting("CheckForUpdates", 1) && (u32)zs_unix_now() - uw_setting("LastUpdateCheck", 0) >= UPDATE_INTERVAL) check_updates(0);
         return 0;
     case WM_PF_DONE: {
         Pf *p = (Pf *)lp;
@@ -1622,7 +1690,10 @@ static LRESULT CALLBACK wnd_proc(HWND hw, UINT m, WPARAM wp, LPARAM lp) {
         }
         DestroyWindow(hw);
         return 0;
-    case WM_DESTROY: PostQuitMessage(0); return 0;
+    case WM_DESTROY:
+        if (A.install_on_exit && A.dl_path) install_update(0);
+        PostQuitMessage(0);
+        return 0;
     }
     return uw_defproc(hw, m, wp, lp);
 }
@@ -1674,8 +1745,10 @@ static int run(void) {
         add_sources(&v);
         pv_free(&v, 1);
     }
-    /* At most once a day, a few seconds after starting. */
-    if (uw_setting("CheckForUpdates", 1) && (u32)zs_unix_now() - uw_setting("LastUpdateCheck", 0) >= 86400) SetTimer(A.w, 3, 3000, NULL);
+    /* Once a week: a few seconds after starting when a week has passed,
+     * and, for a window left open, looked at again every hour. */
+    if (uw_setting("CheckForUpdates", 1) && (u32)zs_unix_now() - uw_setting("LastUpdateCheck", 0) >= UPDATE_INTERVAL) SetTimer(A.w, 3, 3000, NULL);
+    SetTimer(A.w, 4, 3600 * 1000, NULL);
     return uw_loop(A.w);
 }
 

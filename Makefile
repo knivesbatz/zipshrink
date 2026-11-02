@@ -21,6 +21,7 @@ CFLAGS  += -std=gnu99 -Wall -Wextra -Wno-unused-parameter -Wno-cast-function-typ
            -fno-asynchronous-unwind-tables -fno-ident -DNDEBUG \
            -DMINIZ_NO_STDIO -DMINIZ_NO_TIME -DMINIZ_NO_ARCHIVE_APIS -DMINIZ_NO_ZLIB_APIS \
            -Isrc -Ivendor/miniz
+CFLAGS  += $(EXTRA_CFLAGS)
 # Windows 4.0 (95 / NT 4) in the PE header; later versions refuse nothing older.
 LDFLAGS := -nostdlib -nostartfiles -s -Wl,--major-os-version,4 -Wl,--minor-os-version,0 \
            -Wl,--major-subsystem-version,4 -Wl,--minor-subsystem-version,0 \

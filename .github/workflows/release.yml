@@ -17,11 +17,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-i686 binutils-mingw-w64-i686 nsis wixl
+      - run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-i686 binutils-mingw-w64-i686 nsis
       - name: Build packages
         run: packaging/build-windows.sh
-        env:
-          ZIPSHRINK_UPDATE_REPO: ${{ github.repository }}
       - name: The tag matches the program's version
         run: |
           tag="${{ inputs.tag }}"; tag="${tag:-$GITHUB_REF_NAME}"
@@ -34,8 +32,15 @@ jobs:
           set -eux
           tag="${{ inputs.tag }}"; tag="${tag:-$GITHUB_REF_NAME}"
           cd dist
+          # ZipShrink 0.2 and 0.3 verify updates with SHA256SUMS; later
+          # versions use the SHA-256 digest GitHub records for each file.
           sha256sum * > SHA256SUMS
           cat SHA256SUMS
+          cat > ../notes.md <<'NOTES'
+          **Download `ZipShrink-setup.exe`** - it is the only file you need. It installs ZipShrink on Windows 95 through Windows 11, and ZipShrink then keeps itself up to date.
+
+          (`SHA256SUMS` is read by the updater of older versions; you do not need to download it.)
+          NOTES
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             # A release made in the web UI, or a draft left by a failed run:
             # attach the files to it and publish it.
@@ -45,5 +50,5 @@ jobs:
             fi
           else
             # Creates the tag at the built commit when run by hand.
-            gh release create "$tag" * --repo "$GITHUB_REPOSITORY" --title "ZipShrink ${tag#v}" --generate-notes --target "$GITHUB_SHA"
+            gh release create "$tag" * --repo "$GITHUB_REPOSITORY" --title "ZipShrink ${tag#v}" --notes-file ../notes.md --generate-notes --target "$GITHUB_SHA"
           fi
