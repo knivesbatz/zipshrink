@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
 
-pub const SIZE: [f32; 2] = [500.0, 214.0];
+pub const SIZE: [f32; 2] = [500.0, 196.0];
 
 const MARGIN: f32 = 22.0;
 const ICON: f32 = 64.0;
@@ -47,6 +47,16 @@ impl Uninstaller {
         ctx.send_viewport_cmd(ViewportCommand::Close);
     }
 
+    /// Quits with "cancelled", unless the uninstall has already started
+    /// removing files (or has ended): then the window stays.
+    fn quit_cancelled(&mut self, ctx: &egui::Context) {
+        if self.task.as_ref().is_some_and(|t| !t.cancel()) {
+            return;
+        }
+        self.code.store(EXIT_CANCELLED, Ordering::SeqCst);
+        self.quit(ctx);
+    }
+
     fn body(&self, ui: &mut Ui) {
         let p = pal(ui.ctx());
         ui.spacing_mut().item_spacing.y = 6.0;
@@ -68,7 +78,7 @@ impl Uninstaller {
                 let shown = design::elide_start(ui, &path, typ::callout(), ui.available_width());
                 design::text(ui, shown, typ::callout(), p.text_tertiary).on_hover_text(path);
             }
-            Some(Phase::Waiting) => {
+            Some(Phase::Waiting | Phase::Cancelled) => {
                 design::para(ui, "ZipShrink is open.", typ::headline(), p.text);
                 design::para(ui, "It will be removed when you quit it.", typ::callout(), p.text_secondary);
                 ui.add_space(space::XS);
@@ -102,11 +112,13 @@ impl eframe::App for Uninstaller {
             self.code.store(if r.is_ok() { EXIT_DONE } else { EXIT_FAILED }, Ordering::SeqCst);
         }
         // Files are being removed: the window stays until that is done.
+        // `cancel` decides under the task's lock, so a wait that has just
+        // ended cannot slip through.
         if ctx.input(|i| i.viewport().close_requested()) && !self.quitting {
-            if phase == Some(Phase::Working) {
+            let busy = phase == Some(Phase::Working)
+                || self.task.as_ref().is_some_and(|t| !t.cancel() && !matches!(t.snapshot().phase, Phase::Done(_)));
+            if busy {
                 ctx.send_viewport_cmd(ViewportCommand::CancelClose);
-            } else if let Some(t) = &self.task {
-                t.cancel();
             }
         }
         window_chrome(ui, "Uninstall ZipShrink");
@@ -128,6 +140,11 @@ impl eframe::App for Uninstaller {
         );
         let mut col = ui.new_child(UiBuilder::new().max_rect(text));
         self.body(&mut col);
+        // Snug around the usual text; a long error grows the window.
+        let over = (col.min_rect().bottom() - text.bottom()).ceil();
+        if over > 0.0 {
+            ctx.send_viewport_cmd(ViewportCommand::InnerSize(full.size() + vec2(0.0, over)));
+        }
 
         let row = Rect::from_min_max(
             pos2(text.left(), full.bottom() - MARGIN - space::CONTROL),
@@ -142,8 +159,7 @@ impl eframe::App for Uninstaller {
                 let cancel = Button::secondary("Cancel").min_width(96.0).show(&mut b);
                 let esc = keys_free && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape));
                 if cancel.clicked() || esc {
-                    self.code.store(EXIT_CANCELLED, Ordering::SeqCst);
-                    self.quit(&ctx);
+                    self.quit_cancelled(&ctx);
                 } else if uninstall.clicked() {
                     self.task = Some(Task::start(&ctx, self.backend, Job::Uninstall(self.dir.clone())));
                 }
@@ -151,11 +167,11 @@ impl eframe::App for Uninstaller {
             Some(Phase::Waiting) => {
                 b.add_enabled_ui(false, |ui| Button::new("Uninstall", Kind::Destructive).min_width(96.0).show(ui));
                 if Button::secondary("Cancel").min_width(96.0).show(&mut b).clicked() {
-                    self.code.store(EXIT_CANCELLED, Ordering::SeqCst);
-                    self.quit(&ctx);
+                    // Refused when the uninstall started meanwhile.
+                    self.quit_cancelled(&ctx);
                 }
             }
-            Some(Phase::Working) => {
+            Some(Phase::Working | Phase::Cancelled) => {
                 b.add_enabled_ui(false, |ui| Button::new("Uninstall", Kind::Destructive).min_width(96.0).show(ui));
                 b.add_enabled_ui(false, |ui| Button::secondary("Cancel").min_width(96.0).show(ui));
             }
