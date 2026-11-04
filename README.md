@@ -8,13 +8,10 @@ back, and proven identical. The space the originals used is reclaimed while
 the archive grows, so zipping a 200 GB folder needs a little over the space
 of one file, not another 200 GB.
 
-It is a free, open-source Windows program and command-line tool that runs on
-**every 32- and 64-bit Windows from Windows 95 to Windows 11**. It looks like
-it shipped in 1998, with the "futuristic" Millennium touches of 1999–2001 —
-and since version 0.2 it really could have: it is written in C against the
-Win32 API of 1995, with no runtime library, and the same two small programs
-run on a Pentium with Windows 95 and on a current Windows 11 PC. Underneath
-the look it is a crash-safe, fully verified archiver.
+It is a free, open-source desktop app and command-line tool for **64-bit
+Windows 10 and 11**, written in Rust. It has a modern interface with light
+and dark appearance, comes as one installer, and keeps itself up to date.
+Underneath it is a crash-safe, fully verified archiver.
 
 ![ZipShrink main window](docs/screenshots/main-window.png)
 
@@ -28,7 +25,6 @@ the look it is a crash-safe, fully verified archiver.
 - [How it works](#how-it-works)
 - [Is it safe?](#is-it-safe)
 - [Install](#install)
-- [Supported Windows versions](#supported-windows-versions)
 - [Using the app](#using-the-app)
 - [Using the command line](#using-the-command-line)
 - [Splitting into several ZIPs](#splitting-into-several-zips)
@@ -62,30 +58,29 @@ a large file is a batch of its own), ZipShrink:
    programs from writing to it while it is read;
 2. reads it once, computing its **CRC-32** and **SHA-256** while compressing
    it (Deflate) onto the end of `NAME.zip.partial`;
-3. checks the file did not change while it was read (size, modification time,
-   and on Windows NT-family systems its volume and file id); if it did, it
-   re-reads it;
+3. checks the file did not change while it was read (size, modification and
+   change time, volume and file id); if it did, it re-reads it;
 4. **flushes** the archive to the storage device (`FlushFileBuffers`);
-5. **reads every entry back** — on Windows NT, 2000, XP and later through a
-   second handle that bypasses the file cache — compares the header bytes,
-   decompresses the data and compares the result with the CRC-32 and SHA-256
-   taken from the original;
+5. **reads every entry back** through a second handle that bypasses the file
+   cache, compares the header bytes, decompresses the data and compares the
+   result with the CRC-32 and SHA-256 taken from the original;
 6. records the batch in a **durable recovery journal**
    (`NAME.zip.partial.journal`, flushed to disk);
 7. only then, if deletion is on, checks each original once more — same size,
    times and file id, and by default the same SHA-256 by re-reading it — and
-   **permanently deletes it**. On the NT family the check and the delete
-   happen through one handle that keeps writers out, so nothing can change or
-   swap the file in between.
+   **permanently deletes it**. The check and the delete happen through one
+   handle that keeps writers out, so nothing can change or swap the file in
+   between.
 
 When every file is done, ZipShrink writes the ZIP central directory, reads
 the whole archive back (every entry decompressed, CRC-32 and SHA-256 checked;
-every central-directory record compared with the journal), renames
+every central-directory record compared with the journal, and the archive
+read again with an independent ZIP reader), renames
 `NAME.zip.partial` to `NAME.zip`, and removes the folders that were emptied.
 
 Archives are plain ZIP (ZIP64 when files or archives exceed 4 GB or 65,535
 entries) and open in Windows Explorer, 7-Zip, WinZip, WinRAR, Info-ZIP
-`unzip`, macOS Archive Utility and every other ZIP tool. ZipShrink stores each
+`unzip` and every other ZIP tool. ZipShrink stores each
 file's SHA-256 in an extra field that other tools ignore, so `zipshrink verify`
 can check archives it made far more strictly than CRC-32 alone.
 
@@ -119,115 +114,87 @@ deleting anything it cannot prove is safely archived.
 - **Existing archives are never overwritten** without confirmation, and even
   then only once the new archive is complete and verified.
 
-These guarantees are tested: the test suite kills the real program at 17
-points (before and after the journal commit, before, during and after a
-deletion, during finalization and rename, with a torn journal write), injects
+These guarantees are tested: the test suite kills the real program at every
+critical step (while writing an entry, before and after the journal commit,
+before and after a deletion, during finalization and rename, with a torn
+journal write), injects
 disk-full and I/O errors, damages journals and partial archives, then resumes
 and checks with an independent ZIP reader that every original is either still
 present unchanged or in the final archive with an identical SHA-256. The suite
-runs on Windows and, under Wine, in both Windows 10 and Windows 95 modes.
+runs on Windows and Linux in CI.
 
 **Still: deleted originals are gone.** After the job, the archive is the only
 copy. Keep backups of anything irreplaceable, and do not use deletion on
 storage you suspect is failing. See [docs/DATA_SAFETY.md](docs/DATA_SAFETY.md)
-for the full design and its limits — including what is weaker on Windows
-95, 98 and Me.
+for the full design and its limits.
 
 ## Install
 
 Download **`ZipShrink-setup.exe`** from the
 [latest release](https://github.com/knivesbatz/zipshrink/releases/latest) and
-run it. That one file is all you need, on any Windows from 95 to 11. ZipShrink
+run it. That one file is all you need, on 64-bit Windows 10 or 11. ZipShrink
 then [keeps itself up to date](#updates).
 
-- On Windows 2000 and later it installs for your user account, with no
-  administrator rights needed. On 95, 98, Me and NT 4 it installs into
-  Program Files.
-- It adds a Start menu entry, an optional "Compress with ZipShrink…"
-  right-click menu and desktop icon, and, on 2000 and later, the `zipshrink`
-  command.
+- It installs for your user account, with no administrator rights needed.
+- It adds a Start menu entry and, optionally, a desktop icon, a "Compress with
+  ZipShrink…" right-click menu and the `zipshrink` command.
 - For silent installs: `ZipShrink-setup.exe /S`.
+- On older or 32-bit Windows it refuses to install and changes nothing.
 
 The programs are not code-signed yet, so Windows SmartScreen may say "Windows
 protected your PC": choose **More info**, then **Run anyway**. (The
-`SHA256SUMS` file next to the installer is for the updater of ZipShrink 0.2
-and 0.3; you do not need it.)
+`SHA256SUMS` file next to the installer is for the updater of older
+versions; you do not need it.)
 
-Installed ZipShrink from `ZipShrink.msi` (0.1 to 0.3)? Run the new setup: it
-removes the MSI copy, after Windows asks for permission, so only one
-ZipShrink remains.
-
-Upgrading from 0.1.x: download and run the new setup (0.1's built-in
-updater does not find 0.2); it installs into the same folder.
-Unfinished jobs started by 0.1.x must be finished with 0.1.x (the journal
-format changed). macOS and Linux builds were dropped in 0.2; ZipShrink 0.1.0's
-source code remains in the repository history for them.
-
-## Supported Windows versions
-
-| Windows | Status |
-|---|---|
-| 10 and 11 (x64, x86, Arm64 through emulation) | Supported; tested in CI on Windows Server 2022/2025 runners. |
-| Vista, 7, 8, 8.1 | Supported (same code paths as 10 and 11). |
-| 2000, XP, Server 2003 | Supported. |
-| NT 4.0 | Supported, except downloading updates (see below). |
-| 95, 98, Me | Supported, with the differences below. Tested with Wine in Windows 95 mode; not tested on real hardware. |
-
-Differences on Windows 95, 98 and Me, which have no Unicode file API:
-
-- File names must be representable in the system code page (for example
-  Windows-1252 in Western Europe). Files whose names are not are skipped,
-  reported, and left in place — never guessed at.
-- Paths are limited to 260 characters (the NT family handles longer paths).
-- Reading back after the flush goes through the file cache; the NT family
-  bypasses it.
-- Before deleting, ZipShrink re-reads and hashes the original while holding a
-  handle that keeps writers out, then closes it, re-checks size and time, and
-  deletes it by name. The NT family checks and deletes through one handle.
-  See [DATA_SAFETY.md](docs/DATA_SAFETY.md#windows-95-98-and-me).
-- FAT16 and FAT32 cannot hold files of 4 GB or more; the space check warns,
-  and `--part-size 4000M` keeps each archive smaller.
-- **Updates cannot be downloaded** (on NT 4 either): GitHub requires TLS 1.2,
-  which these systems cannot speak. ZipShrink tells you so; get new versions
-  from another computer.
-
-The main window is about 780 × 560 pixels and needs an 800 × 600 screen.
+Upgrading: the new setup installs into the same folder as every earlier
+version and keeps your choices. If you installed an earlier version from an
+`.msi` package, setup removes that copy, after Windows asks for permission,
+so only one ZipShrink remains. Finish unfinished jobs before upgrading from
+0.2–0.4: version 1.0 cannot continue them (the journal format changed), but
+`zipshrink salvage` rebuilds a ZIP from what they hold.
 
 ## Using the app
 
-1. Drag files and folders onto the window, or use **Add Folder…** / **Add Files…**.
-2. Choose where to save the archive, its name, the compression level, and
-   optionally **Split** it into several ZIPs: into a number of files, or
-   into files of a size you choose (for example 650 MB each).
-3. Tick **Delete original files after successful compression** if you want
-   the space back as you go.
-4. Check the **Disk space** box: it shows the estimated archive size (from
-   compressing samples of your files), how much space the job needs, how much
-   is free, and whether it fits.
-5. Click **Compress** (or **Compress & Delete**, which asks you to confirm).
+ZipShrink's window follows the design of macOS Big Sur: a sidebar with
+**Compress**, **Verify** and **Resume**, a unified toolbar, forms with
+pop-up menus and checkboxes, and Finder-style lists, in light and dark.
+
+1. Drag files and folders onto the window, or click **+** (Add Files) or the
+   folder button (Add Folder) in the toolbar. You can also select files and
+   folders in File Explorer, right-click and choose **Compress with
+   ZipShrink…** (on Windows 11 it is under **Show more options**); everything
+   you selected opens in one ZipShrink window.
+2. Set **Save As** and **Where**, the **Compression** level, and optionally
+   **Split** it into several ZIPs: into a number of files, or into files of a
+   size you choose (for example 650 MB each).
+3. Tick **Delete originals after verifying them** if you want the space back
+   as you go. ZipShrink asks you to confirm.
+4. Look at **Estimate**: a storage bar shows how much space the job needs
+   against what is free on the drive, with the estimated archive size (from
+   compressing samples of your files) and whether it fits.
+5. Click **Compress** (Ctrl+Enter).
 
 ![Deletion must be confirmed](docs/screenshots/delete-confirmation.png)
 
-While it runs, a millennium-style control panel shows live readings: a
-seven-segment LCD with the overall percentage, transfer rate, space freed and
-files done; a segmented throughput meter (one bar per quarter second, with the
-peak rate); and activity lights that flash as files are actually compressed,
-verified, committed to the journal and deleted. Below it you see the current
-file, overall progress and time remaining, archive size, free space, space
-reclaimed, compression ratio, speed, and a list of every file as it is
-archived and deleted (problems have their own list). **Pause** stops at the
-next safe point; you can resume later, even after closing the app.
+While it runs you see overall progress and time remaining, the current file,
+archive size, space freed, speed, free space, and every file as it is
+archived and deleted (problems are listed under **Notes**). **Pause** stops at
+the next safe point; you can resume later, even after closing the app.
 
 ![Progress](docs/screenshots/progress.png)
 
 When it finishes you get the archive location, original and final sizes, space
-reclaimed, files archived, originals deleted, anything skipped or kept and why,
-and the verification result, with **Open Folder** and **Verify Again**.
+freed, anything skipped or kept and why, and the verification result, with
+**Show in Explorer** and **Verify Again**.
 
 ![Finished](docs/screenshots/finished.png)
 
-**File** also has **Resume Unfinished Job…**, **Verify Archive…** and
-**Salvage Partial Archive…**.
+**Verify** checks any ZIP file entry by entry. **Resume** lists interrupted
+jobs and continues them where they stopped. **Preferences** (the gear in the
+toolbar, or Ctrl+,) sets the appearance (Light, Dark or Auto), reduced
+motion and automatic updates, and lists the keyboard shortcuts.
+
+![ZipShrink in dark mode](docs/screenshots/main-window-dark.png)
 
 ## Using the command line
 
@@ -246,6 +213,7 @@ Options for `create` (`zipshrink --help` lists them all):
 | `-l, --level 0-9` | 0 stores, 1 fastest, 6 default, 9 smallest |
 | `-p, --parts N` | split into N separate ZIP files of about equal size |
 | `-s, --part-size SIZE` | split into separate ZIP files of about SIZE each, e.g. `650M` or `2G` |
+| `-j, --threads N` | worker threads that compress small files ahead of the writer |
 | `--delete-originals` | delete each original after it is verified (asks to confirm; `-y` skips the question) |
 | `--min-free SIZE` | free space to keep on the destination, e.g. `2G` (default `256M`) |
 | `--quick-change-check` | before deleting, compare size, times and file id instead of re-reading the whole file |
@@ -297,65 +265,53 @@ continues all unfinished parts of a set.
 ## If something goes wrong
 
 - **The program or computer crashed, or you paused:** start ZipShrink and
-  choose **File → Resume Unfinished Job…** (or open the `.partial` file with
-  it), or run `zipshrink resume NAME.zip.partial`.
+  resume the job (or open the `.partial` file with it), or run
+  `zipshrink resume NAME.zip.partial`.
 - **The disk filled up / reached the reserve:** free some space (or lower the
   reserve with `--min-free`) and resume.
 - **ZipShrink says the partial archive or journal is damaged:** it has stopped
   deleting. Keep both files. `zipshrink status NAME.zip.partial` shows what
-  they hold; **File → Salvage** or `zipshrink salvage NAME.zip.partial`
-  rebuilds a readable ZIP from every intact entry (each checked by CRC-32 and
+  they hold; salvaging it in the app or with
+  `zipshrink salvage NAME.zip.partial` rebuilds a readable ZIP from every intact entry (each checked by CRC-32 and
   SHA-256).
 
 ## Updates
 
-ZipShrink updates itself. Once a week it checks GitHub for a newer release,
-when it starts or while it stays open. When it finds one:
+ZipShrink updates itself. Once a week it checks GitHub for a newer release.
+When it finds one and you agree, it downloads the new installer and checks
+its SHA-256 against the one GitHub records for the file (a file that does
+not match is deleted and nothing is installed), then installs it without any
+setup screens: right away, closing and reopening ZipShrink, or when you close
+it. Updates never install while a job is running. The update goes into the
+same folder and keeps your choices, such as no desktop icon. Automatic checks
+can be turned off in the app.
 
-1. It downloads the new installer in the background and checks its SHA-256
-   against the one GitHub records for the file. A file that does not match
-   is deleted, and nothing is installed.
-2. It asks whether to install now. If you choose **Yes**, ZipShrink closes,
-   updates in a few seconds without any setup screens, and opens again. If
-   you choose **No**, or a job is running, the update installs when you close
-   ZipShrink.
-
-The update goes into the same folder and keeps your choices, such as no
-desktop icon. **Tools → Check for Updates…** checks right away, and
-**Tools → Update Automatically** turns the weekly check off. From the command
-line, `zipshrink update` installs the newest version and
-`zipshrink update --check` only reports it.
-
-- **Coming from 0.2 or 0.3:** those versions only show new releases in the
-  status bar. Choose **Tools → Check for Updates…** once; after that,
-  updates arrive by themselves.
-- **Windows 95/98/Me and NT 4:** these cannot reach GitHub (see above).
+From the command line, `zipshrink update` downloads, verifies and installs
+the newest version, and `zipshrink update --check` only reports it.
 
 ## Limitations
 
 See [docs/FORMATS_AND_LIMITATIONS.md](docs/FORMATS_AND_LIMITATIONS.md). In short:
 output is ZIP with Deflate or Store (no encryption, no 7z/zstd); NTFS
 alternate data streams, ACLs and extended attributes are not stored; links are
-skipped; FAT destinations cannot hold archives of 4 GB or more; compression
-uses one processor core; Windows only.
+skipped; FAT destinations cannot hold archives of 4 GB or more; 64-bit
+Windows 10 and 11 only.
 
 ## Building from source
 
-ZipShrink is plain C99 built with MinGW-w64's 32-bit compiler, from Linux or
-from Windows (MSYS2):
+ZipShrink is a Rust workspace (Rust 1.89 or later):
 
 ```
-make                      # build/zipshrink.exe and build/zipshrink-gui.exe
-make test                 # the test suite (Windows, or Wine elsewhere)
-make check-imports        # every imported function exists on Windows 95
-packaging/build-windows.sh   # dist/ZipShrink-setup.exe
+cargo build --release
+cargo test --workspace --features zipshrink-core/failpoints,zipshrink-cli/failpoints
+packaging/build-windows.sh   # dist/ZipShrink-setup.exe, cross-built on Linux
 ```
 
 See [docs/BUILDING.md](docs/BUILDING.md).
 
 ## Documentation
 
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — modules, on-disk formats, transaction design, Windows 95 compatibility
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — crates, on-disk formats, transaction design, installer and updater
 - [docs/DATA_SAFETY.md](docs/DATA_SAFETY.md) — guarantees, failure handling, what is and is not protected
 - [docs/FORMATS_AND_LIMITATIONS.md](docs/FORMATS_AND_LIMITATIONS.md)
 - [docs/BUILDING.md](docs/BUILDING.md)
@@ -363,5 +319,6 @@ See [docs/BUILDING.md](docs/BUILDING.md).
 
 ## License
 
-MIT — see [LICENSE](LICENSE). The only third-party code, miniz's deflate and
-inflate, is also MIT licensed; see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+MIT — see [LICENSE](LICENSE). Third-party crates and fonts are listed with
+their licenses in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md); all are
+permissive.

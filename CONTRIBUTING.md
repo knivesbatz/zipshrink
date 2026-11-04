@@ -6,22 +6,22 @@ recoverability come before features and speed**.
 * Read [docs/DATA_SAFETY.md](docs/DATA_SAFETY.md) and
   [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) first.
 * Any change to compression, verification, the journal, deletion or recovery
-  needs tests, including crash tests where a new failure point is introduced
-  (`zs_fail("name")` in the code, listed in `FAILPOINTS` in `tests/run.py`).
+  needs tests, including fault-injection or crash tests where a new failure
+  point is introduced (see `crates/zipshrink-core/src/failpoint.rs`).
 * Tests must check contents by SHA-256, never just that an archive opens.
-* Keep Windows 95 working: no C runtime functions, and any Windows function
-  newer than Windows 95 (or any "W" function) must be looked up with
-  `zs_proc()` and used only when present. `make check-imports` enforces this.
-* Run before opening a pull request (on Linux this needs 32-bit Wine):
+* Run before opening a pull request:
 
   ```
-  make
-  make check-imports
-  make test
+  cargo fmt --all
+  cargo clippy --workspace --all-targets --features zipshrink-core/failpoints,zipshrink-cli/failpoints -- -D warnings
+  cargo test --workspace --features zipshrink-core/failpoints,zipshrink-cli/failpoints
   ```
 
-  and, if you can, the suite in Windows 95 mode (see docs/BUILDING.md).
-* New third-party code must have a permissive license and be listed in
-  THIRD_PARTY_LICENSES.md.
+* ZipShrink ships for 64-bit Windows 10 and 11 only; the code builds and the
+  tests run on Linux too, which is handy for development. If you change the
+  installer or the updater, build `packaging/build-windows.sh` (see
+  docs/BUILDING.md).
+* New dependencies must have a permissive license (`scripts/third_party.py`
+  enforces an allow list) and be actively maintained.
 
 By contributing you agree that your work is released under the MIT License.

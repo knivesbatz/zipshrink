@@ -1,0 +1,29 @@
+[package]
+name = "zipshrink-gui"
+description = "ZipShrink desktop app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "zipshrink-gui"
+path = "src/main.rs"
+
+[dependencies]
+zipshrink-core.workspace = true
+zipshrink-update.workspace = true
+# Default features (wgpu, accesskit for screen readers, system-font
+# fallback for CJK and other scripts) plus OpenGL as a fallback renderer.
+eframe = { version = "0.37", features = ["glow"] }
+rfd = "0.17"
+serde_json.workspace = true
+raw-window-handle = "0.6"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_UI_Controls", "Win32_UI_WindowsAndMessaging"] }
+
+[build-dependencies]
+winresource = { version = "0.1", default-features = false }

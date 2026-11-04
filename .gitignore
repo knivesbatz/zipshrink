@@ -1,5 +1,4 @@
 /build
-/build-old
 /dist
 /target
 *.partial

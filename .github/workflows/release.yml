@@ -6,25 +6,32 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Tag to release (e.g. v0.2.0)
+        description: Tag to release (e.g. v1.0.0)
         required: true
 
 permissions:
   contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  ZIPSHRINK_UPDATE_REPO: ${{ github.repository }}
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-i686 binutils-mingw-w64-i686 nsis
-      - name: Build packages
-        run: packaging/build-windows.sh
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      - run: sudo apt-get update && sudo apt-get install -y mingw-w64 nsis
       - name: The tag matches the program's version
         run: |
           tag="${{ inputs.tag }}"; tag="${tag:-$GITHUB_REF_NAME}"
-          v=$(sed -n 's/^#define ZS_VERSION "\(.*\)"/\1/p' src/version.h)
-          test "$tag" = "v$v" || { echo "::error::tag $tag does not match version $v in src/version.h"; exit 1; }
+          v=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"]=="zipshrink-cli"))')
+          test "$tag" = "v$v" || { echo "::error::tag $tag does not match version $v in Cargo.toml"; exit 1; }
+      - name: Build the installer
+        run: packaging/build-windows.sh
       - name: Checksums and release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -34,21 +41,56 @@ jobs:
           cd dist
           # ZipShrink 0.2 and 0.3 verify updates with SHA256SUMS; later
           # versions use the SHA-256 digest GitHub records for each file.
-          sha256sum * > SHA256SUMS
+          sha256sum ZipShrink-setup.exe > SHA256SUMS
           cat SHA256SUMS
           cat > ../notes.md <<'NOTES'
-          **Download `ZipShrink-setup.exe`** - it is the only file you need. It installs ZipShrink on Windows 95 through Windows 11, and ZipShrink then keeps itself up to date.
+          **Download `ZipShrink-setup.exe`** - it is the only file you need. It installs ZipShrink on 64-bit Windows 10 and Windows 11, and ZipShrink then keeps itself up to date.
 
           (`SHA256SUMS` is read by the updater of older versions; you do not need to download it.)
           NOTES
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             # A release made in the web UI, or a draft left by a failed run:
             # attach the files to it and publish it.
-            gh release upload "$tag" * --repo "$GITHUB_REPOSITORY" --clobber
+            gh release upload "$tag" ZipShrink-setup.exe SHA256SUMS --repo "$GITHUB_REPOSITORY" --clobber
             if [ "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = true ]; then
               gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --target "$GITHUB_SHA" --title "ZipShrink ${tag#v}"
             fi
+            # The updater asks for the latest release.
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --latest
           else
             # Creates the tag at the built commit when run by hand.
-            gh release create "$tag" * --repo "$GITHUB_REPOSITORY" --title "ZipShrink ${tag#v}" --notes-file ../notes.md --generate-notes --target "$GITHUB_SHA"
+            gh release create "$tag" ZipShrink-setup.exe SHA256SUMS --repo "$GITHUB_REPOSITORY" --title "ZipShrink ${tag#v}" --notes-file ../notes.md --generate-notes --target "$GITHUB_SHA" --latest
           fi
+      - name: The published release is complete and its files are intact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eux
+          tag="${{ inputs.tag }}"; tag="${tag:-$GITHUB_REF_NAME}"
+          rel=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag")
+          test "$(jq -r .draft <<<"$rel")" = false
+          test "$(jq -r .prerelease <<<"$rel")" = false
+          test "$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)" = "$tag"
+          rm -rf check && mkdir check
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern ZipShrink-setup.exe --pattern SHA256SUMS --dir check
+          (cd check && sha256sum -c SHA256SUMS)
+          cmp check/ZipShrink-setup.exe dist/ZipShrink-setup.exe
+          digest=$(jq -r '.assets[] | select(.name == "ZipShrink-setup.exe") | .digest' <<<"$rel")
+          test "$digest" = "sha256:$(sha256sum dist/ZipShrink-setup.exe | cut -d' ' -f1)"
+      - name: Delete every other release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Only the new release stays, so there is one download to choose.
+          # Runs only after the step above confirmed it is published and
+          # intact, so a failed run never leaves no release. Git tags stay.
+          set -eu
+          tag="${{ inputs.tag }}"; tag="${tag:-$GITHUB_REF_NAME}"
+          keep=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq .id)
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | "\(.id) \(.tag_name)"' |
+            while read -r id name; do
+              if [ "$id" != "$keep" ] && [ "$name" != "$tag" ]; then
+                echo "Deleting release $name ($id)"
+                gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+              fi
+            done
