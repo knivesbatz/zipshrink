@@ -67,8 +67,13 @@ pub fn travel(ctx: &Context, t: f32, distance: f32) -> f32 {
 /// Default page-transition duration.
 pub const PAGE: f32 = SLOW;
 
-/// Whether Windows' "Animation effects" setting is off.
+/// Whether Windows' "Animation effects" setting is off, or macOS's
+/// "Reduce motion" is on.
 pub fn system_prefers_reduced() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        crate::macos::reduce_motion()
+    }
     #[cfg(windows)]
     {
         use windows_sys::Win32::UI::WindowsAndMessaging::{SystemParametersInfoW, SPI_GETCLIENTAREAANIMATION};
@@ -77,7 +82,7 @@ pub fn system_prefers_reduced() -> bool {
         let ok = unsafe { SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, (&mut on as *mut i32).cast(), 0) };
         ok != 0 && on == 0
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         false
     }

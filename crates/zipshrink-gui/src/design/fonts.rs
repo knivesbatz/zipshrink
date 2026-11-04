@@ -1,12 +1,14 @@
 //! Typography, following Big Sur: SF Pro Text for the interface, SF Pro
-//! Display for large headings and SF Mono for fixed-width text, when the
-//! user has those fonts installed (Apple's licence does not allow shipping
-//! them). Otherwise the bundled Inter and Inter Display, which are drawn in
-//! the same spirit, and egui's monospace font. Characters neither has
-//! (CJK, Arabic, ...) come from the system's own fonts through eframe's
+//! Display for large headings and SF Mono for fixed-width text. On a Mac
+//! these come from the system's own variable fonts; elsewhere they are used
+//! when the user has them installed (Apple's licence does not allow
+//! shipping them). Otherwise the bundled Inter and Inter Display, which are
+//! drawn in the same spirit, and egui's monospace font. Characters neither
+//! has (CJK, Arabic, ...) come from the system's own fonts through eframe's
 //! system-font fallback.
 
 use super::tokens::typ;
+use eframe::egui::epaint::text::VariationCoords;
 use eframe::egui::{self, FontData, FontDefinitions, FontFamily, FontId, TextStyle};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -52,6 +54,33 @@ fn find(names: &[&str]) -> Option<Vec<Vec<u8>>> {
     None
 }
 
+/// The variable San Francisco font every Mac has, used at fixed points on
+/// its weight and optical-size axes: [regular, medium, semibold, display].
+fn system_sf(path: &str) -> Option<[FontData; 4]> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    let base = FontData::from_owned(std::fs::read(path).ok()?);
+    let axes = base.variation_axes();
+    crate::smoke::log(&format!(
+        "font {path} axes {}",
+        axes.iter().map(|a| format!("{}={}..{}", a.tag, a.range.min, a.range.max)).collect::<Vec<_>>().join(" ")
+    ));
+    let wght = axes.iter().find(|a| a.tag == *b"wght")?.range;
+    let opsz = axes.iter().find(|a| a.tag == *b"opsz").map(|a| a.range);
+    // SF Pro's named instances: Regular 400, Medium 510, Semibold 590.
+    let at = |weight: f32, size: f32| {
+        let mut f = base.clone();
+        let mut coords = VariationCoords::new([(b"wght", weight.clamp(wght.min, wght.max))]);
+        if let Some(r) = opsz {
+            coords.push(b"opsz", size.clamp(r.min, r.max));
+        }
+        f.tweak.coords = coords;
+        f
+    };
+    Some([at(400.0, 13.0), at(510.0, 13.0), at(590.0, 13.0), at(590.0, 28.0)])
+}
+
 /// Installs the fonts and the text styles egui's own widgets use.
 pub fn install(ctx: &egui::Context) {
     let mut defs = FontDefinitions::default();
@@ -71,10 +100,15 @@ pub fn install(ctx: &egui::Context) {
         .and_then(|mut v| v.pop())
         .map(FontData::from_owned)
         .unwrap_or(FontData::from_static(INTER_DISPLAY));
-    for (name, data) in [(typ::REGULAR, regular), (typ::MEDIUM, medium), (typ::SEMIBOLD, semibold), (typ::DISPLAY, display)] {
+    let faces = system_sf("/System/Library/Fonts/SFNS.ttf").unwrap_or([regular, medium, semibold, display]);
+    for (name, data) in [typ::REGULAR, typ::MEDIUM, typ::SEMIBOLD, typ::DISPLAY].into_iter().zip(faces) {
         defs.font_data.insert(name.to_owned(), Arc::new(data));
     }
-    if let Some(mut mono) = find(&["SF-Mono-Regular.otf"]) {
+    let system_mono = if cfg!(target_os = "macos") { std::fs::read("/System/Library/Fonts/SFNSMono.ttf").ok() } else { None };
+    if let Some(m) = system_mono {
+        defs.font_data.insert("sf-mono".into(), Arc::new(FontData::from_owned(m)));
+        defs.families.entry(FontFamily::Monospace).or_default().insert(0, "sf-mono".into());
+    } else if let Some(mut mono) = find(&["SF-Mono-Regular.otf"]) {
         if let Some(m) = mono.pop() {
             defs.font_data.insert("sf-mono".into(), Arc::new(FontData::from_owned(m)));
             defs.families.entry(FontFamily::Monospace).or_default().insert(0, "sf-mono".into());
