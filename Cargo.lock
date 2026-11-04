@@ -5197,6 +5197,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "zipshrink-setup"
+version = "1.1.0"
+dependencies = [
+ "eframe",
+ "flate2",
+ "raw-window-handle",
+ "rfd",
+ "windows-sys 0.61.2",
+ "winresource",
+]
+
+[[package]]
 name = "zipshrink-update"
 version = "1.1.0"
 dependencies = [

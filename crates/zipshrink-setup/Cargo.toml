@@ -1,0 +1,32 @@
+[package]
+name = "zipshrink-setup"
+description = "ZipShrink installer for Windows"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[[bin]]
+name = "zipshrink-setup"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { version = "0.37", features = ["glow"] }
+rfd = "0.17"
+flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
+raw-window-handle = "0.6"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_UI_Controls",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[build-dependencies]
+winresource = { version = "0.1", default-features = false }
+flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
