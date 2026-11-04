@@ -1,21 +1,32 @@
 //! Checks GitHub Releases for a newer ZipShrink and installs it.
 //!
 //! A check only reads the public release list (automatically at most once a
-//! week, see [`CHECK_INTERVAL`]). When the user agrees to an update, the
-//! installer is downloaded to the temp folder and its SHA-256 compared with
-//! the digest GitHub publishes for the file (or, for releases without one,
-//! with the release's `SHA256SUMS`); a file that does not match is deleted.
-//! The verified installer then runs silently (`/S`): it waits for ZipShrink
-//! to close, upgrades the installation in place keeping the user's choices,
-//! and with `/RESTART` starts ZipShrink again. The app starts it right away
-//! or when it closes. Portable copies and other systems are pointed to the
-//! release page instead.
+//! week, see [`CHECK_INTERVAL`]). A release that has no package for this
+//! system ([`platform_asset`]) counts as no update. When the user agrees to
+//! an update, the package is downloaded to the temp folder and its SHA-256
+//! compared with the digest GitHub publishes for the file (or, for releases
+//! without one, with the release's `SHA256SUMS`); a file that does not match
+//! is deleted.
+//!
+//! - Windows: the verified installer runs silently (`/S`): it waits for
+//!   ZipShrink to close, upgrades the installation in place keeping the
+//!   user's choices, and with `/RESTART` starts ZipShrink again.
+//! - macOS: `ZipShrink-mac.zip` is unpacked and checked next to the running
+//!   `ZipShrink.app`, the two bundles are swapped atomically, and a detached
+//!   shell removes the old copy once ZipShrink has quit (see `mac.rs`).
+//!
+//! The app installs right away (Restart) or when it closes. Portable copies,
+//! copies that cannot replace themselves ([`Method::Blocked`]) and other
+//! systems are pointed to the release page instead.
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+#[cfg(unix)]
+mod mac;
 
 /// `owner/repo` the releases come from, fixed at build time by the release
 /// workflow (`ZIPSHRINK_UPDATE_REPO=${{ github.repository }}`).
@@ -29,8 +40,13 @@ pub const CURRENT: &str = match option_env!("ZIPSHRINK_UPDATE_FROM") {
     Some(v) => v,
     None => env!("CARGO_PKG_VERSION"),
 };
-/// The installer asset of every release (also the only file users download).
+/// The Windows installer asset of every release (also what Windows users download).
 pub const WINDOWS_INSTALLER: &str = "ZipShrink-setup.exe";
+/// The zipped `ZipShrink.app` the macOS updater installs. Never rename it:
+/// every installed Mac copy looks for this name.
+pub const MAC_APP_ZIP: &str = "ZipShrink-mac.zip";
+/// The bundle identifier of `ZipShrink.app`; an update must have the same.
+pub const MAC_BUNDLE_ID: &str = "io.github.knivesbatz.zipshrink";
 /// Only for releases without GitHub's per-asset SHA-256 digest; ZipShrink
 /// 0.2 and 0.3 need it in every release.
 pub const CHECKSUMS: &str = "SHA256SUMS";
@@ -80,6 +96,8 @@ pub enum UpdateError {
     RateLimited,
     Invalid(String),
     Checksum(String),
+    /// The downloaded update failed a check before it was installed.
+    Install(String),
     Io(std::io::Error),
 }
 
@@ -90,6 +108,7 @@ impl std::fmt::Display for UpdateError {
             UpdateError::RateLimited => write!(f, "GitHub is limiting requests from this network right now; try again in an hour"),
             UpdateError::Invalid(e) => write!(f, "unexpected update information: {e}"),
             UpdateError::Checksum(e) => write!(f, "the download failed its integrity check and was deleted: {e}"),
+            UpdateError::Install(e) => write!(f, "the update was not installed: {e}"),
             UpdateError::Io(e) => write!(f, "{e}"),
         }
     }
@@ -138,7 +157,27 @@ fn net_error(e: ureq::Error) -> UpdateError {
     }
 }
 
-/// Returns the latest release if it is newer than this build.
+/// The release asset this system updates from: the installer on Windows,
+/// the zipped app on macOS, none elsewhere.
+pub fn platform_asset() -> Option<&'static str> {
+    if cfg!(windows) {
+        Some(WINDOWS_INSTALLER)
+    } else if cfg!(target_os = "macos") {
+        Some(MAC_APP_ZIP)
+    } else {
+        None
+    }
+}
+
+/// Whether a release with these assets is an update for a system that
+/// installs from `wanted` (see [`platform_asset`]). Systems without a
+/// package of their own are pointed to the release page, so any release is.
+fn offers(assets: &[Asset], wanted: Option<&str>) -> bool {
+    wanted.is_none_or(|w| assets.iter().any(|a| a.name == w))
+}
+
+/// Returns the latest release if it is newer than this build and has a
+/// package for this system (a release without one counts as up to date).
 pub fn check() -> Result<Option<Release>, UpdateError> {
     let url = format!("https://api.github.com/repos/{REPO}/releases/latest");
     let resp = agent().get(&url).header("Accept", "application/vnd.github+json").call();
@@ -156,7 +195,7 @@ pub fn check() -> Result<Option<Release>, UpdateError> {
     if parse_version(&version).is_none() {
         return Err(UpdateError::Invalid(format!("release tag {:?} is not a version", r.tag_name)));
     }
-    if !is_newer(&version, CURRENT) {
+    if !is_newer(&version, CURRENT) || !offers(&r.assets, platform_asset()) {
         return Ok(None);
     }
     Ok(Some(Release { version, tag: r.tag_name, page: r.html_url, notes: r.body.unwrap_or_default(), assets: r.assets }))
@@ -167,16 +206,82 @@ pub fn check() -> Result<Option<Release>, UpdateError> {
 pub enum Method {
     /// Download and run the Windows installer.
     Installer,
-    /// Open the release page (portable copies, systems other than Windows).
+    /// Download the zipped app and put it in place of this `ZipShrink.app` (macOS).
+    ReplaceApp,
+    /// Open the release page (portable copies, builds outside an app bundle,
+    /// other systems).
     ReleasePage,
+    /// This copy could update itself, but not where it is now.
+    Blocked(Blocker),
 }
 
+/// Why a macOS copy cannot replace itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Blocker {
+    /// macOS runs it from a temporary, read-only copy (App Translocation),
+    /// because it was opened where it was downloaded or from the disk image.
+    Translocated,
+    /// It is on a read-only volume, such as the mounted disk image.
+    ReadOnlyVolume,
+    /// This account cannot change the app or the folder it is in.
+    NotWritable,
+}
+
+impl Blocker {
+    /// What to do about it, in one short sentence (for the update banner).
+    pub fn advice(&self) -> &'static str {
+        match self {
+            Blocker::Translocated | Blocker::ReadOnlyVolume => "Move ZipShrink to Applications to update it.",
+            Blocker::NotWritable => "Download it from the release page.",
+        }
+    }
+}
+
+impl Method {
+    /// Whether the app downloads and installs updates by itself.
+    pub fn installs_itself(&self) -> bool {
+        matches!(self, Method::Installer | Method::ReplaceApp)
+    }
+
+    /// One or two sentences on how this copy gets updated.
+    pub fn explain(&self) -> String {
+        match self {
+            Method::Installer => "The new version's setup program installs it in place; your settings are kept.",
+            Method::ReplaceApp => "The new version replaces this copy of ZipShrink; your settings are kept.",
+            Method::ReleasePage if cfg!(windows) => "This copy is portable: download the new version from the release page.",
+            Method::ReleasePage => "Download the new version from the release page.",
+            Method::Blocked(Blocker::Translocated) => {
+                "macOS runs ZipShrink from a temporary, read-only copy because it has not been moved since it was \
+                 downloaded. Move ZipShrink to the Applications folder and open it from there to update it."
+            }
+            Method::Blocked(Blocker::ReadOnlyVolume) => {
+                "ZipShrink is running from a read-only disk, such as its disk image. Move ZipShrink to the \
+                 Applications folder and open it from there to update it."
+            }
+            Method::Blocked(Blocker::NotWritable) => {
+                "This account cannot change the folder ZipShrink is in, so it cannot update itself. Download the \
+                 new version from the release page, or update it from an administrator account."
+            }
+        }
+        .to_string()
+    }
+}
+
+/// How this copy can be updated.
+#[cfg(not(target_os = "macos"))]
 pub fn method() -> Method {
     if cfg!(windows) && !is_portable() {
         Method::Installer
     } else {
         Method::ReleasePage
     }
+}
+
+/// How this copy can be updated: by replacing its app bundle, unless it is
+/// not in one or cannot change it where it is.
+#[cfg(target_os = "macos")]
+pub fn method() -> Method {
+    mac::method()
 }
 
 pub fn is_portable() -> bool {
@@ -239,32 +344,50 @@ fn fetch_text(url: &str, limit: u64) -> Result<String, UpdateError> {
     Ok(text)
 }
 
-/// The SHA-256 the installer of `release` must have: GitHub's digest of the
+/// The SHA-256 `asset` of `release` must have: GitHub's digest of the
 /// asset, or for releases without one, its line in `SHA256SUMS`.
-fn installer_hash(release: &Release, asset: &Asset) -> Result<[u8; 32], UpdateError> {
+fn asset_hash(release: &Release, asset: &Asset) -> Result<[u8; 32], UpdateError> {
     if let Some(h) = asset.digest.as_deref().and_then(parse_digest) {
         return Ok(h);
     }
+    let name = &asset.name;
     let sums_asset = release
         .assets
         .iter()
         .find(|a| a.name == CHECKSUMS)
-        .ok_or_else(|| UpdateError::Invalid(format!("release {} publishes no SHA-256 for {WINDOWS_INSTALLER}", release.tag)))?;
+        .ok_or_else(|| UpdateError::Invalid(format!("release {} publishes no SHA-256 for {name}", release.tag)))?;
     let sums = fetch_text(&sums_asset.url, 1 << 20)?;
-    expected_hash(&sums, WINDOWS_INSTALLER).ok_or_else(|| UpdateError::Invalid(format!("{CHECKSUMS} does not list {WINDOWS_INSTALLER}")))
+    expected_hash(&sums, name).ok_or_else(|| UpdateError::Invalid(format!("{CHECKSUMS} does not list {name}")))
 }
 
-/// Downloads the installer of `release` into the temp folder and checks its
-/// SHA-256 (see [`installer_hash`]). Returns its path; a download that does
-/// not match is deleted.
+/// Where a download of `asset` for `version` goes in the temp folder:
+/// `ZipShrink-setup.exe` becomes `ZipShrink-1.2.0-setup.exe`.
+fn download_name(asset: &str, version: &str) -> String {
+    match asset.strip_prefix("ZipShrink-") {
+        Some(rest) => format!("ZipShrink-{version}-{rest}"),
+        None => format!("ZipShrink-{version}-{asset}"),
+    }
+}
+
+/// Downloads this system's package of `release` ([`platform_asset`]: the
+/// installer on Windows, the zipped app on macOS) into the temp folder and
+/// checks its SHA-256. Returns its path; a download that does not match is
+/// deleted.
 pub fn download_installer(release: &Release, progress: &mut dyn FnMut(u64, u64)) -> Result<PathBuf, UpdateError> {
+    let name = platform_asset().ok_or_else(|| UpdateError::Invalid("there is no update package for this system".into()))?;
+    download_verified(release, name, progress)
+}
+
+/// Downloads asset `name` of `release` into the temp folder and checks its
+/// SHA-256 (see [`asset_hash`]); a download that does not match is deleted.
+pub fn download_verified(release: &Release, name: &str, progress: &mut dyn FnMut(u64, u64)) -> Result<PathBuf, UpdateError> {
     let asset = release
         .assets
         .iter()
-        .find(|a| a.name == WINDOWS_INSTALLER)
-        .ok_or_else(|| UpdateError::Invalid(format!("release {} has no {WINDOWS_INSTALLER}", release.tag)))?;
-    let want = installer_hash(release, asset)?;
-    let dest = std::env::temp_dir().join(format!("ZipShrink-{}-setup.exe", release.version));
+        .find(|a| a.name == name)
+        .ok_or_else(|| UpdateError::Invalid(format!("release {} has no {name}", release.tag)))?;
+    let want = asset_hash(release, asset)?;
+    let dest = std::env::temp_dir().join(download_name(name, &release.version));
     let _ = std::fs::remove_file(&dest);
     let got = match download_to(&asset.url, &dest, progress) {
         Ok(h) => h,
@@ -280,9 +403,26 @@ pub fn download_installer(release: &Release, progress: &mut dyn FnMut(u64, u64))
     Ok(dest)
 }
 
+/// Gets a downloaded update ready to install without further waiting: on
+/// macOS unpacks the zipped app next to this one and checks it (bundle id,
+/// newer version, minimum macOS, code signature, that its command-line tool
+/// runs), deletes the zip and returns the checked `.app`; elsewhere returns
+/// `path` as it is. [`launch_installer`] takes either.
+#[cfg(target_os = "macos")]
+pub fn prepare_update(path: &Path) -> Result<PathBuf, UpdateError> {
+    mac::prepare(path)
+}
+
+/// Gets a downloaded update ready to install: nothing to do on this system.
+#[cfg(not(target_os = "macos"))]
+pub fn prepare_update(path: &Path) -> Result<PathBuf, UpdateError> {
+    Ok(path.to_path_buf())
+}
+
 /// Starts the downloaded installer silently (`"path" /S`, plus `/RESTART`
 /// to start ZipShrink again when it is done). It waits for ZipShrink to
 /// close, so the caller should exit soon after.
+#[cfg(not(target_os = "macos"))]
 pub fn launch_installer(path: &Path, restart: bool) -> std::io::Result<()> {
     let mut cmd = std::process::Command::new(path);
     cmd.arg("/S");
@@ -290,6 +430,24 @@ pub fn launch_installer(path: &Path, restart: bool) -> std::io::Result<()> {
         cmd.arg("/RESTART");
     }
     cmd.spawn().map(|_| ())
+}
+
+/// Installs a downloaded update (the zip from [`download_installer`], or the
+/// `.app` from [`prepare_update`]): puts the new `ZipShrink.app` in place of
+/// this one with an atomic swap, then starts a detached clean-up that waits
+/// for this process to exit, removes the old copy and, with `restart`, opens
+/// the new one. The caller should exit soon after.
+#[cfg(target_os = "macos")]
+pub fn launch_installer(path: &Path, restart: bool) -> std::io::Result<()> {
+    mac::install(path, restart)
+}
+
+/// Removes what an earlier update left behind (staging folders of processes
+/// that are gone) and the quarantine flag of this app bundle, in the
+/// background. Call it once, from the main app instance, at start-up.
+#[cfg(target_os = "macos")]
+pub fn mac_cleanup_leftovers() {
+    std::thread::spawn(mac::cleanup_leftovers);
 }
 
 /// Opens a URL in the default browser.
@@ -422,7 +580,47 @@ mod tests {
         let setup = release.assets.iter().find(|a| a.name == WINDOWS_INSTALLER).unwrap();
         assert_eq!(setup.digest.as_deref().and_then(parse_digest), Some([0xab; 32]));
         // With a digest, no SHA256SUMS download is needed.
-        assert_eq!(installer_hash(&release, setup).unwrap(), [0xab; 32]);
+        assert_eq!(asset_hash(&release, setup).unwrap(), [0xab; 32]);
+    }
+
+    fn asset(name: &str) -> Asset {
+        Asset { name: name.into(), url: format!("https://x/{name}"), size: 1, digest: None }
+    }
+
+    #[test]
+    fn releases_without_this_systems_package_are_not_updates() {
+        let windows_only = [asset(CHECKSUMS), asset(WINDOWS_INSTALLER)];
+        let both = [asset(WINDOWS_INSTALLER), asset("ZipShrink.dmg"), asset(MAC_APP_ZIP), asset(CHECKSUMS)];
+        assert!(offers(&windows_only, Some(WINDOWS_INSTALLER)));
+        assert!(!offers(&windows_only, Some(MAC_APP_ZIP)));
+        assert!(offers(&both, Some(MAC_APP_ZIP)));
+        assert!(offers(&both, None));
+        assert!(offers(&[], None));
+        assert_eq!(platform_asset().is_some(), cfg!(any(windows, target_os = "macos")));
+    }
+
+    #[test]
+    fn download_names() {
+        assert_eq!(download_name(WINDOWS_INSTALLER, "1.2.0"), "ZipShrink-1.2.0-setup.exe");
+        assert_eq!(download_name(MAC_APP_ZIP, "1.2.0"), "ZipShrink-1.2.0-mac.zip");
+        assert_eq!(download_name("other.zip", "1.2.0"), "ZipShrink-1.2.0-other.zip");
+    }
+
+    #[test]
+    fn methods_explain_themselves() {
+        assert!(Method::Installer.installs_itself() && Method::ReplaceApp.installs_itself());
+        assert!(!Method::ReleasePage.installs_itself());
+        for b in [Blocker::Translocated, Blocker::ReadOnlyVolume, Blocker::NotWritable] {
+            assert!(!Method::Blocked(b).installs_itself());
+            assert!(!b.advice().is_empty());
+        }
+        assert!(Method::Blocked(Blocker::Translocated).explain().contains("Applications"));
+        assert!(Method::Blocked(Blocker::ReadOnlyVolume).explain().contains("Applications"));
+        assert!(Method::Blocked(Blocker::NotWritable).explain().contains("release page"));
+        assert!(Blocker::Translocated.advice().contains("Move ZipShrink to Applications"));
+        if !cfg!(target_os = "macos") {
+            assert_ne!(method(), Method::ReplaceApp);
+        }
     }
 
     #[test]
