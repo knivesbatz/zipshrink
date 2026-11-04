@@ -35,6 +35,8 @@ pub struct Updates {
     ready: Option<Ready>,
     /// A newer release for copies that cannot install it themselves.
     page_only: Option<Release>,
+    /// How this copy gets updated: looked up at start-up and after each check.
+    method: Method,
     /// Why this copy cannot install `page_only` itself, when it could elsewhere.
     blocked: Option<Blocker>,
     /// An install that failed after the banner's Restart, shown as a toast by
@@ -56,6 +58,7 @@ impl Updates {
             status: String::new(),
             ready: None,
             page_only: None,
+            method: zipshrink_update::method(),
             blocked: None,
             failed: None,
             banner: false,
@@ -101,6 +104,18 @@ impl Updates {
         }
     }
 
+    /// What Preferences says about updates for this copy: how they install,
+    /// or why this copy cannot install them itself (say, "Move ZipShrink to
+    /// the Applications folder…").
+    pub fn how(&self) -> String {
+        if self.method.installs_itself() {
+            "Checks GitHub once a week, downloads a new version in the background and checks its SHA-256, then asks before installing."
+                .into()
+        } else {
+            format!("Checks GitHub once a week and tells you when there is a new version. {}", self.method.explain())
+        }
+    }
+
     pub fn sidebar_note(&self) -> Option<(String, String)> {
         if self.banner {
             return None;
@@ -137,7 +152,11 @@ impl Updates {
                 let manual = *manual;
                 if let Ok(r) = rx.try_recv() {
                     self.state = State::Idle;
-                    let method = if matches!(r, Ok(Some(_))) { zipshrink_update::method() } else { Method::ReleasePage };
+                    if matches!(r, Ok(Some(_))) {
+                        // The app may have been moved since it started.
+                        self.method = zipshrink_update::method();
+                    }
+                    let method = self.method;
                     match r {
                         Ok(Some(rel)) if method.installs_itself() => {
                             self.status = format!("Downloading ZipShrink {}…", rel.version);
@@ -156,10 +175,10 @@ impl Updates {
                                 Method::Blocked(b) => Some(b),
                                 _ => None,
                             };
-                            self.status = match method {
-                                // Preferences shows the whole reason.
-                                Method::Blocked(_) => format!("ZipShrink {} is available. {}", rel.version, method.explain()),
-                                _ => format!("ZipShrink {} is available.", rel.version),
+                            // Preferences shows the whole reason (`how`) above this.
+                            self.status = match self.blocked {
+                                Some(b) => format!("ZipShrink {} is available. {}", rel.version, b.advice()),
+                                None => format!("ZipShrink {} is available.", rel.version),
                             };
                             self.page_only = Some(rel);
                             self.banner = true;
