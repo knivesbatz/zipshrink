@@ -47,7 +47,8 @@ fn args() -> Args {
 fn main() {
     let a = args();
     let backend = ops::backend();
-    let code = if a.silent { silent(&a, backend) } else { ui::run(if a.uninstall { ui::Mode::Uninstall } else { ui::Mode::Install }, backend) };
+    let code =
+        if a.silent { silent(&a, backend) } else { ui::run(if a.uninstall { ui::Mode::Uninstall } else { ui::Mode::Install }, backend) };
     std::process::exit(code);
 }
 
@@ -59,7 +60,8 @@ fn silent(a: &Args, backend: &'static dyn ops::Backend) -> i32 {
     }
     let existing = backend.detect();
     if a.uninstall {
-        let Some(dir) = existing.map(|e| e.dir).or_else(|| std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf()))) else {
+        let Some(dir) = existing.map(|e| e.dir).or_else(|| std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())))
+        else {
             return 1;
         };
         return match backend.uninstall(&dir, &|_, _| {}) {

@@ -9,9 +9,9 @@
 
 use std::path::PathBuf;
 
+mod demo;
 #[cfg(windows)]
 mod windows;
-mod demo;
 
 /// The optional parts. All on by default; an upgrade keeps what the
 /// existing installation had.
