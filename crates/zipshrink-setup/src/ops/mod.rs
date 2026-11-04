@@ -9,9 +9,12 @@
 
 use std::path::PathBuf;
 
+mod demo;
 #[cfg(windows)]
 mod windows;
-mod demo;
+// Pure path helpers for windows.rs, built everywhere so their tests run on Linux.
+#[cfg_attr(not(windows), allow(dead_code))]
+mod winpath;
 
 /// The optional parts. All on by default; an upgrade keeps what the
 /// existing installation had.

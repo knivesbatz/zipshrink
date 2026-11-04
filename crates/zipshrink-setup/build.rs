@@ -19,7 +19,8 @@ fn main() {
     if let Some(dir) = std::env::var_os("ZIPSHRINK_SETUP_PAYLOAD") {
         let dir = PathBuf::from(dir);
         println!("cargo:rerun-if-changed={}", dir.display());
-        let mut names: Vec<_> = std::fs::read_dir(&dir).expect("payload folder").flatten().map(|e| e.path()).filter(|p| p.is_file()).collect();
+        let mut names: Vec<_> =
+            std::fs::read_dir(&dir).expect("payload folder").flatten().map(|e| e.path()).filter(|p| p.is_file()).collect();
         names.sort();
         for p in names {
             println!("cargo:rerun-if-changed={}", p.display());
@@ -43,9 +44,38 @@ fn main() {
             .set("FileDescription", "ZipShrink Installer")
             .set("ProductName", "ZipShrink")
             .set("OriginalFilename", "ZipShrink-setup.exe")
-            .set("LegalCopyright", "MIT License, ZipShrink contributors");
+            .set("LegalCopyright", "MIT License, ZipShrink contributors")
+            .set_manifest(MANIFEST);
         if let Err(e) = res.compile() {
             println!("cargo:warning=could not embed Windows resources: {e}");
         }
     }
 }
+
+/// Runs as the user who started it (never asks for administrator rights:
+/// everything goes in the user's own folders and registry), declares
+/// Windows 10/11 so no compatibility shims apply, and asks for version 6 of
+/// the common controls (rfd's message boxes use TaskDialog).
+const MANIFEST: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity type="win32" name="ZipShrink.Setup" version="1.0.0.0" processorArchitecture="amd64"/>
+  <description>ZipShrink Installer</description>
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+    </application>
+  </compatibility>
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*"/>
+    </dependentAssembly>
+  </dependency>
+</assembly>
+"#;
