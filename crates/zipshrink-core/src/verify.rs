@@ -229,6 +229,7 @@ impl ArchiveCheck {
 /// reader and its SHA-256 compared. `on_bytes` reports progress.
 pub fn check_archive(path: &Path, data: bool, cancel: &AtomicBool, on_bytes: &mut dyn FnMut(u64)) -> io::Result<ArchiveCheck> {
     let f = File::open(path)?;
+    // The cache is per file, so this also covers the reader opened below.
     let _ = platform::evict_cache(&f, 0, f.metadata()?.len());
     let central = format::read_central_directory(&f)?;
     let mut zip = zip::ZipArchive::new(File::open(path)?)

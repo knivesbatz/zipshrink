@@ -65,6 +65,15 @@ pub fn canonical_roots(sources: &[PathBuf]) -> Result<Vec<PathBuf>> {
         if c.file_name().is_none() {
             return Err(Error::Invalid(format!("{} is the root of a drive; select folders inside it instead", c.display())));
         }
+        // On macOS every drive is a folder under /Volumes: a folder on a
+        // different volume from its parent is the top of a drive.
+        #[cfg(target_os = "macos")]
+        if kind == Kind::Dir && is_mount_point(&c) {
+            return Err(Error::Invalid(format!(
+                "{} is the top of a separate drive or volume; select folders inside it instead",
+                c.display()
+            )));
+        }
         for r in &roots {
             if is_within(&c, r) || is_within(r, &c) {
                 return Err(Error::Invalid(format!("{} and {} overlap; select each folder only once", r.display(), c.display())));
@@ -73,6 +82,16 @@ pub fn canonical_roots(sources: &[PathBuf]) -> Result<Vec<PathBuf>> {
         roots.push(c);
     }
     Ok(roots)
+}
+
+#[cfg(target_os = "macos")]
+fn is_mount_point(p: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let Some(parent) = p.parent() else { return true };
+    match (std::fs::symlink_metadata(p), std::fs::metadata(parent)) {
+        (Ok(a), Ok(b)) => a.dev() != b.dev(),
+        _ => false,
+    }
 }
 
 fn meta_for(name: String, is_dir: bool, st: &FileStat) -> EntryMeta {
@@ -191,7 +210,11 @@ fn walk_dir(
         let rd = match std::fs::read_dir(&dir) {
             Ok(rd) => rd,
             Err(e) => {
-                out.skipped.push((dir.clone(), format!("the folder could not be read: {e}")));
+                let why = match platform::permission_hint(&e) {
+                    Some(hint) => hint.to_string(),
+                    None => e.to_string(),
+                };
+                out.skipped.push((dir.clone(), format!("the folder could not be read: {why}")));
                 continue;
             }
         };

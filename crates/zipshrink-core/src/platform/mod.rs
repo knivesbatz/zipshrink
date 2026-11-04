@@ -17,6 +17,8 @@ use std::fs::File;
 use std::io;
 use std::path::Path;
 
+#[cfg(any(target_os = "macos", all(test, unix)))]
+mod macos;
 #[cfg(unix)]
 mod unix;
 #[cfg(unix)]
@@ -135,7 +137,40 @@ pub fn is_file_too_large(e: &io::Error) -> bool {
 
 /// Free space available to this user on the volume holding `path`.
 pub fn available_space(path: &Path) -> io::Result<u64> {
-    fs4::available_space(path)
+    #[cfg(target_os = "macos")]
+    {
+        macos::available_space(path)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        fs4::available_space(path)
+    }
+}
+
+/// True when, in this process, a file sync on the volume holding `path`
+/// could not flush the drive's write cache and fell back to a weaker sync
+/// (macOS volumes without `F_FULLFSYNC`, such as SMB or some exFAT drivers).
+pub fn drive_cache_not_flushed(path: &Path) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        macos::drive_cache_not_flushed(path)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = path;
+        false
+    }
+}
+
+/// Extra advice for an error opening or reading a source, when the
+/// platform has some (macOS privacy protection answers EPERM).
+pub fn permission_hint(e: &io::Error) -> Option<&'static str> {
+    #[cfg(target_os = "macos")]
+    if e.raw_os_error() == Some(libc::EPERM) {
+        return Some(macos::EPERM_HINT);
+    }
+    let _ = e;
+    None
 }
 
 /// Writes all of `buf` at `offset`.

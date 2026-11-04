@@ -707,6 +707,13 @@ impl Job {
             self.archive.as_ref().map(|a| a.len).unwrap_or(0)
         };
         let finished = !matches!(outcome, Outcome::Stopped { .. });
+        let mut warnings = self.warnings.clone();
+        if platform::drive_cache_not_flushed(&self.paths.dest_dir()) {
+            warnings.push(
+                "the drive cache was not flushed: the destination volume does not support a full flush (F_FULLFSYNC), so a power cut soon after the job could still lose its most recent writes"
+                    .into(),
+            );
+        }
         Report {
             outcome,
             paths: self.paths.clone(),
@@ -724,7 +731,7 @@ impl Job {
             verification: self.verification.clone(),
             readback: self.readback,
             elapsed: self.started.elapsed(),
-            warnings: self.warnings.clone(),
+            warnings,
             recoverable_entries: if finished { 0 } else { self.commits.len() as u64 },
         }
     }
@@ -1372,6 +1379,9 @@ fn meta_with_stat(m: &EntryMeta, st: &FileStat) -> EntryMeta {
 fn describe_source_error(e: &io::Error) -> String {
     if platform::is_sharing_violation(e) {
         return "could not be opened because another program is using it".into();
+    }
+    if let Some(hint) = platform::permission_hint(e) {
+        return format!("could not be opened because {hint}");
     }
     match e.kind() {
         io::ErrorKind::PermissionDenied => format!("could not be opened (permission denied): {e}"),
