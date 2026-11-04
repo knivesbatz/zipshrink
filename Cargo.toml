@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/zipshrink-core", "crates/zipshrink-cli", "crates/zipshrink-gui", "crates/zipshrink-update"]
+members = ["crates/zipshrink-core", "crates/zipshrink-cli", "crates/zipshrink-gui", "crates/zipshrink-update", "crates/zipshrink-setup"]
 
 [workspace.package]
 version = "1.1.0"
