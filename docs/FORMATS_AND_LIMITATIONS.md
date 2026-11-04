@@ -15,10 +15,10 @@
   parts of about a given size (64 KB or more; at most 999 parts).
 
 Archives open in Windows Explorer, 7-Zip, WinZip, WinRAR, Info-ZIP `unzip`,
-macOS Archive Utility, Python `zipfile` and others. Very old tools that
-predate ZIP64 (for example PKZIP 2.04g or the Windows 98 Plus! pack's
-Compressed Folders) open archives under 4 GiB with fewer than 65,535 entries;
-tools that predate UTF-8 names show non-ASCII names in their own code page.
+Python `zipfile` and others. (Windows Explorer's built-in ZIP support is slow
+with very large ZIP64 archives; 7-Zip handles them well.) Tools that predate
+ZIP64 open archives under 4 GiB with fewer than 65,535 entries; tools that
+predate UTF-8 names show non-ASCII names in their own code page.
 
 ## Input
 
@@ -26,9 +26,7 @@ tools that predate UTF-8 names show non-ASCII names in their own code page.
 * **Skipped and left in place** (reported): junctions, symbolic links, mount
   points and other reparse points (including OneDrive/cloud placeholders and
   deduplicated files), offline files, and paths too long for a ZIP name.
-* Windows 95, 98 and Me: names that the system code page cannot represent;
-  paths over 260 characters.
-* NT family: names that are not valid UTF-16 (unpaired surrogates).
+* Names that are not valid UTF-16 (unpaired surrogates).
 * A single file is never split across parts.
 
 ## Not stored in the archive
@@ -46,18 +44,20 @@ lost with them.
 * Archives of 4 GiB or more on FAT16/FAT32 destinations (their file size
   limit); ZipShrink warns in the space check, and `--part-size` (for example
   `--part-size 4000M`) keeps each archive smaller.
-* macOS and Linux (dropped in 0.2).
+* Resuming unfinished jobs started by ZipShrink 0.2–0.4 (a different journal
+  format); `zipshrink salvage` rebuilds a ZIP from their partial archive.
 
 ## Platforms
 
-Every Windows from 95 to 11; see the table in the [README](../README.md#supported-windows-versions).
-One 32-bit build serves them all (64-bit Windows runs it through WOW64; Arm
-Windows through emulation). The window needs an 800 × 600 screen.
+64-bit Windows 10 and 11 (x64; Arm64 Windows 11 through emulation). The
+installer refuses older and 32-bit Windows. The code also builds and is
+tested on Linux, but only Windows is shipped.
 
 ## Performance notes
 
-* Compression uses one processor core (the engine is single-threaded so the
-  archive stays strictly sequential and recoverable).
+* The archive is written by one thread, so it stays strictly sequential and
+  recoverable; small files are read and compressed ahead of it in parallel
+  (`-j`), large files use one core.
 * With deletion on, each file is read twice by default (once to compress,
   once to confirm it did not change before deletion) and each entry is read
   back once from the archive; `--quick-change-check` skips the second read of

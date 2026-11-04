@@ -1,103 +1,104 @@
 #!/usr/bin/env python3
-"""Writes the 16x16 pixel-art program icon as assets/zipshrink.ico (plus PNG
-previews), scaled with nearest-neighbour.
-
-The .ico holds classic uncompressed bitmaps only: 16-colour entries (every
-colour of the art is in the standard VGA palette) that Windows 95 and NT 4
-display, and 32-bit entries for Windows XP and later. PNG-compressed entries,
-which Windows before Vista cannot read, are left out. Needs Pillow only for
-the previews."""
-import struct
+"""Renders the ZipShrink app icon in the macOS Big Sur style: a rounded
+square (superellipse) with depth, a zipped document in the centre, and a
+soft drop shadow. Writes assets/icon-256.png, icon-48.png and zipshrink.ico.
+Requires Pillow and NumPy."""
 from pathlib import Path
 
-ART = [
-    "................",
-    ".KKKKKKKKKKKKKK.",
-    ".KWWWWWWWWWWWDK.",
-    ".KWGGGGKKGGGGDK.",
-    ".KWGGGGKYGGGGDK.",
-    ".KWGGGGYKGGGGDK.",
-    ".KWGGGGKYGGGGDK.",
-    ".KWGGGGYKGGGGDK.",
-    ".KWGGGKKKKGGGDK.",
-    ".KWGGGKRRKGGGDK.",
-    ".KWGGGKKKKGGGDK.",
-    ".KWGGGGGGGGGGDK.",
-    ".KWGGGGGGGGGGDK.",
-    ".KDDDDDDDDDDDDK.",
-    ".KKKKKKKKKKKKKK.",
-    "................",
-]
+import numpy as np
+from PIL import Image, ImageDraw, ImageFilter
 
-# The 16-colour VGA palette, in Windows order.
-VGA = [(0, 0, 0), (128, 0, 0), (0, 128, 0), (128, 128, 0), (0, 0, 128), (128, 0, 128), (0, 128, 128), (192, 192, 192),
-       (128, 128, 128), (255, 0, 0), (0, 255, 0), (255, 255, 0), (0, 0, 255), (255, 0, 255), (0, 255, 255), (255, 255, 255)]
-COLOURS = {"K": (0, 0, 0), "W": (255, 255, 255), "G": (192, 192, 192), "D": (128, 128, 128), "Y": (255, 255, 0), "R": (255, 0, 0)}
+S = 1024  # canvas
+root = Path(__file__).resolve().parent.parent
+assets = root / "assets"
 
 
-def pixel(x, y, size):
-    c = ART[y * 16 // size][x * 16 // size]
-    return COLOURS.get(c)  # None: transparent
+def superellipse_mask(size, inset, n=5.0):
+    """Big Sur's continuous-corner rounded square."""
+    a = (size - 2 * inset) / 2
+    c = size / 2
+    y, x = np.mgrid[0:size, 0:size].astype(np.float64)
+    v = np.abs((x + 0.5 - c) / a) ** n + np.abs((y + 0.5 - c) / a) ** n
+    # Soft edge for anti-aliasing.
+    alpha = np.clip((1.0 - v) * a / 2.0 + 0.5, 0, 1)
+    return Image.fromarray((alpha * 255).astype(np.uint8), "L")
 
 
-def and_mask(size):
-    stride = (size + 31) // 32 * 4
-    out = bytearray()
-    for y in reversed(range(size)):
-        row = bytearray(stride)
-        for x in range(size):
-            if pixel(x, y, size) is None:
-                row[x // 8] |= 0x80 >> (x % 8)
-        out += row
-    return bytes(out)
+def vertical_gradient(size, top, bottom):
+    t = np.linspace(0, 1, size)[:, None]
+    rgb = np.array(top)[None, None, :] * (1 - t[..., None]) + np.array(bottom)[None, None, :] * t[..., None]
+    rgb = np.repeat(rgb, size, axis=1)
+    return Image.fromarray(rgb.astype(np.uint8), "RGB")
 
 
-def entry(size, bpp):
-    header = struct.pack("<IiiHHIIiiII", 40, size, size * 2, 1, bpp, 0, 0, 0, 0, 16 if bpp == 4 else 0, 0)
-    body = bytearray()
-    if bpp == 4:
-        palette = b"".join(struct.pack("BBBB", b, g, r, 0) for r, g, b in VGA)
-        stride = (size * 4 + 31) // 32 * 4
-        for y in reversed(range(size)):
-            row = bytearray(stride)
-            for x in range(size):
-                c = pixel(x, y, size)
-                i = VGA.index(c) if c else 0
-                row[x // 2] |= i << (4 if x % 2 == 0 else 0)
-            body += row
-        data = header + palette + bytes(body)
-    else:
-        for y in reversed(range(size)):
-            for x in range(size):
-                c = pixel(x, y, size)
-                body += struct.pack("BBBB", c[2], c[1], c[0], 255) if c else b"\0\0\0\0"
-        data = header + bytes(body)
-    return data + and_mask(size)
+def render():
+    inset = 100  # Big Sur grid: 824 px icon on a 1024 px canvas
+    canvas = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    mask = superellipse_mask(S, inset)
+
+    # Drop shadow under the tile.
+    shadow = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    sm = mask.point(lambda v: int(v * 0.30))
+    shadow.putalpha(sm)
+    shadow = shadow.transform((S, S), Image.AFFINE, (1, 0, 0, 0, 1, -12)).filter(ImageFilter.GaussianBlur(14))
+    canvas = Image.alpha_composite(canvas, shadow)
+
+    # Tile: blue gradient with a light top sheen.
+    tile = vertical_gradient(S, (88, 182, 255), (0, 86, 230)).convert("RGBA")
+    sheen = vertical_gradient(S, (255, 255, 255), (255, 255, 255)).convert("RGBA")
+    sheen_alpha = np.clip(np.linspace(0.22, 0.0, S), 0, 1)[:, None].repeat(S, axis=1)
+    sheen.putalpha(Image.fromarray((sheen_alpha * 255).astype(np.uint8), "L"))
+    tile = Image.alpha_composite(tile, sheen)
+    tile.putalpha(mask)
+    canvas = Image.alpha_composite(canvas, tile)
+
+    # The document: white sheet with a folded corner and a zipper.
+    doc = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    d = ImageDraw.Draw(doc)
+    l, t, r, b, fold = 312, 222, 712, 802, 120
+    body = [(l + 28, t), (r - fold, t), (r, t + fold), (r, b - 28), (r - 28, b), (l + 28, b), (l, b - 28), (l, t + 28)]
+    # Shadow of the sheet.
+    sh = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    ImageDraw.Draw(sh).polygon([(x, y + 22) for x, y in body], fill=(0, 30, 90, 120))
+    sh = sh.filter(ImageFilter.GaussianBlur(22))
+    canvas = Image.alpha_composite(canvas, sh)
+    d.polygon(body, fill=(255, 255, 255, 255))
+    # Rounded top-left corner.
+    d.pieslice([l, t, l + 56, t + 56], 180, 270, fill=(255, 255, 255, 255))
+    # Folded corner.
+    d.polygon([(r - fold, t), (r - fold, t + fold - 18), (r - fold + 18, t + fold), (r, t + fold)], fill=(214, 228, 245, 255))
+    # Zipper teeth down the middle.
+    cx = (l + r - fold / 2) / 2 - 10
+    y = t + 70
+    k = 0
+    while y < b - 150:
+        off = -26 if k % 2 == 0 else 2
+        d.rounded_rectangle([cx + off, y, cx + off + 24, y + 22], radius=6, fill=(120, 132, 150, 255))
+        y += 30
+        k += 1
+    # The pull, part-way down, with the opened gap below it in blue.
+    py = b - 150
+    d.rounded_rectangle([cx - 30, py, cx + 30, py + 34], radius=10, fill=(70, 82, 100, 255))
+    d.rounded_rectangle([cx - 18, py + 30, cx + 18, py + 112], radius=16, fill=(70, 82, 100, 255))
+    d.ellipse([cx - 8, py + 74, cx + 8, py + 90], fill=(255, 255, 255, 255))
+    canvas = Image.alpha_composite(canvas, doc)
+
+    # Inner edge highlight of the tile.
+    edge = Image.new("RGBA", (S, S), (255, 255, 255, 0))
+    inner = superellipse_mask(S, inset + 3)
+    ring = Image.fromarray(np.clip(np.array(mask, dtype=np.int16) - np.array(inner, dtype=np.int16), 0, 255).astype(np.uint8), "L")
+    edge.putalpha(ring.point(lambda v: int(v * 0.25)))
+    canvas = Image.alpha_composite(canvas, edge)
+    return canvas
 
 
 def main():
-    root = Path(__file__).resolve().parent.parent
-    images = [(s, b) for b in (4, 32) for s in (16, 32, 48)]
-    blobs = [entry(s, b) for s, b in images]
-    out = struct.pack("<HHH", 0, 1, len(images))
-    offset = 6 + 16 * len(images)
-    for (s, b), blob in zip(images, blobs):
-        out += struct.pack("<BBBBHHII", s, s, 16 if b == 4 else 0, 0, 1, b, len(blob), offset)
-        offset += len(blob)
-    out += b"".join(blobs)
-    (root / "assets" / "zipshrink.ico").write_bytes(out)
-    try:
-        from PIL import Image
-        img = Image.new("RGBA", (16, 16))
-        for y in range(16):
-            for x in range(16):
-                c = pixel(x, y, 16)
-                img.putpixel((x, y), c + (255,) if c else (0, 0, 0, 0))
-        img.resize((256, 256), Image.NEAREST).save(root / "assets" / "icon-256.png")
-        img.resize((48, 48), Image.NEAREST).save(root / "assets" / "icon-48.png")
-    except ImportError:
-        pass
-    print("wrote", root / "assets" / "zipshrink.ico")
+    big = render()
+    big.resize((256, 256), Image.LANCZOS).save(assets / "icon-256.png")
+    big.resize((48, 48), Image.LANCZOS).save(assets / "icon-48.png")
+    big.resize((256, 256), Image.LANCZOS).save(
+        assets / "zipshrink.ico", sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
+    )
 
 
 if __name__ == "__main__":

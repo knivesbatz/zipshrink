@@ -27,17 +27,22 @@ of source data, 1,024 entries, or 3 seconds; a large file is its own batch).
 |---|---|---|
 | 1. Open | Opened with `FILE_FLAG_OPEN_REPARSE_POINT` and checked not to be a link, folder or reparse point, with `FILE_SHARE_READ` only: no other program can write to it while it is read. | File reported as failed, left untouched, retried on resume. |
 | 2. Compress | Read once; CRC-32 and SHA-256 computed from the bytes read; Deflate (or Store) output appended to `NAME.zip.partial`. Free space checked before each file and every 16 MiB written. | Entry cut off the archive; the job pauses (disk full / reserve reached) or the file is reported as failed. |
-| 3. Change check | Size and modification time — and on the NT family the volume serial number and file id — compared before and after reading; the bytes read must equal the size. | Re-read up to 3 times, then reported as failed and kept. |
+| 3. Change check | Size, modification time, change time (NTFS ChangeTime), volume serial number and file id compared before and after reading; the bytes read must equal the size. | Re-read up to 3 times, then reported as failed and kept. |
 | 4. Header patch | CRC-32, sizes and SHA-256 written into the entry's local header (same length as the placeholder). | As step 2. |
 | 5. Flush | `FlushFileBuffers` on the archive. | Batch cut off; job stops. Nothing deleted. |
-| 6. Read back | Each entry read again: on the NT family through a second handle opened with `FILE_FLAG_NO_BUFFERING`, so the data comes from the device, not the cache. The header bytes are compared (CRC-32 of the exact header), the header parsed, the data decompressed, and length, CRC-32 and SHA-256 compared with step 2. | Batch cut off; job stops with "verification failed". Nothing deleted. |
+| 6. Read back | Each entry read again through a second handle opened with `FILE_FLAG_NO_BUFFERING`, so the data comes from the device, not the cache. The header bytes are compared (CRC-32 of the exact header), the header parsed, the data decompressed, and length, CRC-32 and SHA-256 compared with step 2. | Batch cut off; job stops with "verification failed". Nothing deleted. |
 | 7. Journal commit | Commit records (offsets, sizes, checksums, source identity) appended to `NAME.zip.partial.journal` and flushed. | Job stops. Nothing deleted. Resume finds whatever reached the disk. |
-| 8. Delete | Only with deletion on. The path must lie inside a selected folder; read-only files are kept unless allowed. The file is opened again; size, times and identity, and (unless `--quick-change-check`) a fresh SHA-256 of its contents, must match the committed values. On the NT family this happens through one handle opened `GENERIC_READ \| DELETE` with `FILE_SHARE_READ`, and the same handle deletes the file (`FileDispositionInformation`), so it cannot be changed or swapped between check and delete. | Original kept, with the reason shown ("it changed", "read-only", "another program has it open", "could not be deleted: …"). |
+| 8. Delete | Only with deletion on. The path must lie inside a selected folder; read-only files are kept unless allowed. The file is opened again; size, times and identity, and (unless `--quick-change-check`) a fresh SHA-256 of its contents, must match the committed values. This happens through one handle opened `GENERIC_READ \| DELETE` with `FILE_SHARE_READ`, and the same handle deletes the file (`FileDispositionInfoEx` with POSIX semantics, or `FileDispositionInfo` where that is missing), so it cannot be changed or swapped between check and delete. | Original kept, with the reason shown ("it changed", "read-only", "another program has it open", "could not be deleted: …"). |
 | 9. Record | `X` (deleted) / `K` (kept) records appended and flushed at the end of the batch. | A crash here means resume finds the original missing and records it as already gone (its verified copy is committed). |
 
-A file that is only allowed to be deleted with **Also delete read-only
-files** has its read-only attribute cleared through the same handle just
-before the delete, and restored if the delete fails.
+A read-only file, when deleting read-only files is allowed, is deleted
+through the same handle with `FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE`
+(or, on file systems without it, with its read-only attribute cleared
+through that handle and restored if the delete fails). Where opening a
+read-only file for deletion is refused outright (some network shares, Wine),
+ZipShrink checks it is still the archived file, clears the attribute by
+name, tries once more with the full check, and puts the attribute back if
+the file is kept.
 
 Folders are removed only at the very end, deepest first, only when empty, and
 only if they lie inside a selected folder.
@@ -53,16 +58,17 @@ only if they lie inside a selected folder.
    central-directory record must also match the journal's commit for that
    entry (name, offset, sizes, CRC-32, SHA-256).
 4. `NAME.zip.partial` is renamed to `NAME.zip` without replacing anything
-   (`MoveFileExW` with `MOVEFILE_WRITE_THROUGH` on the NT family), unless
+   (`MoveFileExW` with `MOVEFILE_WRITE_THROUGH`), unless
    overwriting was confirmed.
 5. `Z` is journaled, emptied folders removed, the journal deleted.
 
-The test suite checks every archive with an independent reader (Python's
-`zipfile`) and the SHA-256 of every extracted file.
+The finished archive is also read with an independent ZIP reader (the `zip`
+crate). The test suite checks every archive that way and compares the
+SHA-256 of every extracted file.
 
 ## Recovery
 
-`resume` (or **File → Resume Unfinished Job…** in the app):
+`resume` (or resuming the job in the app):
 
 * reads the journal; a torn final record (power cut mid-write) is detected by
   its checksum or missing newline and ignored; damage anywhere else stops
@@ -83,7 +89,7 @@ changed, or an archived copy fails re-verification, ZipShrink stops, deletes
 nothing more, and points you to:
 
 * `zipshrink status NAME.zip.partial` — what the journal and archive hold;
-* `zipshrink salvage NAME.zip.partial` (or **File → Salvage**) — walks the
+* `zipshrink salvage NAME.zip.partial` (or salvaging it in the app) — walks the
   local headers, keeps every entry whose data decompresses to exactly the
   recorded size, CRC-32 and SHA-256, skips damaged regions (searching for the
   next valid header), writes a new central directory, verifies the result,
@@ -92,6 +98,11 @@ nothing more, and points you to:
   which holds no complete file.
 
 Partial archives and journals are never deleted automatically after a failure.
+
+Jobs left unfinished by ZipShrink 0.2–0.4 used a different journal format.
+Version 1.0 recognises it, deletes nothing, and says to run `salvage`, which
+rebuilds a ZIP of every file the partial archive holds; files that are not in
+it are still in their original place.
 
 ## Disk space
 
@@ -105,50 +116,24 @@ Partial archives and journals are never deleted automatically after a failure.
 * "Disk full" in the middle of a write: the entry is cut off and the job
   pauses; resume when space is available.
 
-## Windows 95, 98 and Me
-
-These systems have no Unicode file API, no uncached reads through the file
-system, and no way to delete a file through an open handle. On them:
-
-* names outside the system code page are skipped and left in place (never
-  guessed at, so the wrong file can never be opened or deleted);
-* the read-back in step 6 is served from the file cache after the flush, so
-  it proves the data was written correctly through the file system and
-  compresses back to the original, but not that the device returns it;
-* in step 8 the original is opened with a handle that keeps writers out,
-  hashed and compared, then the handle is closed, the size and modification
-  time are checked once more, and the file is deleted by name. A program
-  that replaced the file with one of identical size and time in that instant
-  could have the replacement deleted; the archive still holds the verified
-  original.
-
-Everything else — batching, flushing, the journal, resume, salvage, the free
-space reserve — works the same.
-
 ## How this is tested
 
-* `tests/tests.c` (in-process): CRC-32 and SHA-256 test vectors, the journal
-  (escaping, torn tail, damage), streaming inflate of a corrupted stream,
-  split balance, and the engine keeping an original whose contents changed
-  after it was archived even though its size and time were put back.
-* `tests/run.py` (whole programs): round trips at several levels, ZIP64,
-  1,500-file jobs, several sources, split sets, read-only files, unreadable
-  files, existing outputs, outputs inside a source, the space check, and
-  corrupted and truncated archives for `verify`.
-* Crash tests: `zipshrink-fp.exe` is ended with `TerminateProcess` — no
-  cleanup, like a crash or a forced shutdown — at 17 named points (planning,
-  opening, writing, flushing, before and after the journal commit, before,
-  during and after a deletion, writing the central directory, before and after
-  the rename, cleanup) and with a torn journal write; then the job is resumed,
-  including crashes during the resume itself. Disk-full and I/O errors are
-  injected; journals and partial archives are damaged by hand.
-* After every crash the tests assert that **every original is either still
-  present unchanged or held, byte for byte, in the archive or the partial
-  archive**, and after every resume that extracting the archive with Python's
-  `zipfile` reproduces every original's SHA-256 exactly. "The ZIP opens" is
-  never enough.
-* CI runs the suite natively on Windows and under Wine in Windows 10 and
-  Windows 95 modes.
+* In-process fault injection (`--features failpoints`): I/O errors and
+  disk-full injected at every transaction step and at several hit counts;
+  files changed while read or after archiving; unreadable and undeletable
+  files; read-only files; corrupted partial archive data and headers;
+  truncated partial archives; interrupted planning, finalization, rename and
+  cleanup; a lost journal recovered with `salvage`.
+* Process-level crash tests: the real `zipshrink` executable is killed with
+  `abort()` (no cleanup, like a crash or forced termination) at every named
+  point of the transaction, including a deliberately torn journal write, then
+  resumed — including repeated crashes during resume.
+* After every scenario the tests assert that **every original is either still
+  present unchanged or in the archive with an identical SHA-256**, and for every
+  successful run that extracting the archive with an independent reader
+  reproduces every original's SHA-256 exactly. "The ZIP opens" is never enough.
+* CI runs the suites on Windows and Linux, and a round trip with deletion
+  and splitting checked by 7-Zip.
 
 ## What ZipShrink cannot protect against
 

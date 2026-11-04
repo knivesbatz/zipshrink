@@ -1,16 +1,18 @@
-#!/bin/sh
-# Builds the Windows installer into dist/:
-#   ZipShrink-setup.exe   for Windows 95 through 11 (also what the updater runs)
-# Needs: make, i686-w64-mingw32-gcc, makensis.
-set -eu
+#!/usr/bin/env bash
+# Builds the Windows installer from Linux into dist/:
+#   ZipShrink-setup.exe   for 64-bit Windows 10 and 11 (also what the updater runs)
+# Needs: rustup target x86_64-pc-windows-gnu, mingw-w64, nsis.
+#   packaging/build-windows.sh [VERSION]
+set -euo pipefail
 cd "$(dirname "$0")/.."
-version=$(sed -n 's/^#define ZS_VERSION "\(.*\)"/\1/p' src/version.h)
+VERSION="${1:-$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"]=="zipshrink-cli"))')}"
+TARGET=x86_64-pc-windows-gnu
+BIN="$(pwd)/target/$TARGET/release"
 
-make -j4 B=build all
-python3 scripts/check_imports.py build/zipshrink.exe build/zipshrink-gui.exe
+cargo build --release --locked --target "$TARGET" -p zipshrink-cli -p zipshrink-gui
 
 rm -rf dist
 mkdir -p dist
-(cd packaging/windows && makensis -V2 -DVERSION="$version" -DBINDIR=../../build -DOUTFILE=../../dist/ZipShrink-setup.exe zipshrink.nsi)
+(cd packaging/windows && makensis -V2 -DVERSION="$VERSION" -DBINDIR="$BIN" -DOUTFILE="../../dist/ZipShrink-setup.exe" zipshrink.nsi)
 
 ls -l dist
