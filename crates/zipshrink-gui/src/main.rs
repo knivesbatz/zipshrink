@@ -4,26 +4,41 @@
 mod app;
 mod design;
 mod instance;
+#[cfg(target_os = "macos")]
+mod macos;
+mod smoke;
 mod worker;
 
 use std::path::PathBuf;
 
 fn main() {
+    smoke::init();
     let mut sources = Vec::new();
     let mut resume = None;
     let mut args = std::env::args_os().skip(1);
     while let Some(a) = args.next() {
         if a == "--resume" {
             resume = args.next().map(PathBuf::from);
+        } else if a.to_string_lossy().starts_with("-psn_") {
+            // The process serial number macOS may pass to an app that
+            // Finder starts; not a file.
         } else {
             sources.push(PathBuf::from(a));
         }
     }
     let primary = match instance::claim(&sources, resume.as_deref()) {
         instance::Instance::Forwarded => return,
-        instance::Instance::Primary(p) => std::sync::Arc::new(std::sync::Mutex::new(p)),
+        instance::Instance::Primary(p) => {
+            #[cfg(target_os = "macos")]
+            if p.is_some() {
+                // Only the copy that holds the single-instance lock tidies
+                // up after an update and touches its own bundle.
+                zipshrink_update::mac_cleanup_leftovers();
+                macos::clear_own_quarantine();
+            }
+            std::sync::Arc::new(std::sync::Mutex::new(p))
+        }
     };
-    let icon = eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/icon-256.png")).ok();
     let mut viewport = eframe::egui::ViewportBuilder::default()
         .with_title("ZipShrink")
         .with_app_id("zipshrink")
@@ -37,9 +52,14 @@ fn main() {
     } else {
         viewport.with_decorations(false).with_resizable(true)
     };
-    if let Some(icon) = icon {
-        viewport = viewport.with_icon(std::sync::Arc::new(icon));
+    // On macOS the Dock shows the bundle's own icon (AppIcon.icns).
+    if !cfg!(target_os = "macos") {
+        if let Ok(icon) = eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/icon-256.png")) {
+            viewport = viewport.with_icon(std::sync::Arc::new(icon));
+        }
     }
+    #[cfg(target_os = "macos")]
+    macos::install_early();
     let make = |renderer| eframe::NativeOptions { viewport: viewport.clone(), renderer, ..Default::default() };
     let start = |opts: eframe::NativeOptions, sources: Vec<PathBuf>, resume: Option<PathBuf>| {
         let primary = primary.clone();
@@ -49,6 +69,11 @@ fn main() {
             Box::new(move |cc| {
                 #[cfg(windows)]
                 design::chrome::round_corners(cc);
+                #[cfg(target_os = "macos")]
+                {
+                    macos::attach(&cc.egui_ctx);
+                    macos::install_menu();
+                }
                 let p = primary.lock().ok().and_then(|mut g| g.take());
                 Ok(Box::new(app::App::new(&cc.egui_ctx, sources, resume, p)))
             }),
