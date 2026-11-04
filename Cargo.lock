@@ -5144,7 +5144,7 @@ dependencies = [
 
 [[package]]
 name = "zipshrink-cli"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -5163,7 +5163,7 @@ dependencies = [
 
 [[package]]
 name = "zipshrink-core"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "chrono",
  "crc32fast",
@@ -5184,7 +5184,7 @@ dependencies = [
 
 [[package]]
 name = "zipshrink-gui"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "eframe",
  "raw-window-handle",
@@ -5198,7 +5198,7 @@ dependencies = [
 
 [[package]]
 name = "zipshrink-update"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "hex",
  "serde",
