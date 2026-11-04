@@ -12,7 +12,8 @@ crates/
   zipshrink-cli      `zipshrink` command line tool
   zipshrink-gui      `zipshrink-gui` desktop app (egui/eframe)
   zipshrink-update   update check, verified installer download, settings
-packaging/           Windows installer (NSIS), Mac app bundle, their build and check scripts
+  zipshrink-setup    `ZipShrink-setup.exe`, the Windows installer and uninstaller
+packaging/           the scripts that build the Windows installer and the Mac app, and CI checks
 scripts/             icon and license generators
 ```
 
@@ -181,35 +182,19 @@ CI builds a `zipshrink.exe`, and a Mac app, with `ZIPSHRINK_UPDATE_FROM=0.0.1`
 downloads, verifies and installs the published release on real Windows and
 Mac runners.
 
-## Installer (`packaging/windows/zipshrink.nsi`)
+## Installer (`zipshrink-setup`)
 
-One NSIS installer, `ZipShrink-setup.exe`, built on Linux by
-`packaging/build-windows.sh`. It installs for the current user into
+`ZipShrink-setup.exe`, built on Linux by `packaging/build-windows.sh`, is a
+Rust program that carries the files to install (compressed, embedded at
+build time from the folder named by `ZIPSHRINK_SETUP_PAYLOAD`). Its window
+follows macOS Big Sur's Installer, built from the app's design module
+(`crates/zipshrink-gui/src/design`, included by path): Introduction,
+License, Destination Select, Installation Type (Customize lists the
+optional parts), Installation and Summary. Copied into the install folder as
+`Uninstall.exe`, the same program is the uninstaller.
+
+It replaces the NSIS installer of 0.2-1.0 and keeps its contract, so
+upgrades and the 1.0 updater work unchanged: per user into
 `%LOCALAPPDATA%\Programs\ZipShrink` (no administrator rights), the folder
-every earlier version used on Windows 10, and records it in
-`HKCU\Software\ZipShrink` and an Add/Remove Programs entry. Optional parts:
-Start menu and desktop shortcuts, the Explorer right-click menu, and the
-`zipshrink` command on the user's PATH; an upgrade keeps exactly the parts
-the earlier installation had. Silent (`/S`), it waits up to a minute for a
-running ZipShrink to close; `/RESTART` starts the app again afterwards. It
-removes a copy installed from an earlier `.msi` package, and refuses to
-install on Windows older than 10 or on 32-bit Windows (exit code 3 when
-silent), since older ZipShrink versions there are offered this update too.
-
-## Mac app (`packaging/macos/`)
-
-`packaging/build-macos.sh` builds both programs for `aarch64-apple-darwin`
-and `x86_64-apple-darwin` (`MACOSX_DEPLOYMENT_TARGET=11.0`), joins them with
-`lipo`, fills in `packaging/macos/Info.plist` and makes `AppIcon.icns` from
-`assets/icon-1024.png`. The plist sets the bundle identifier
-`io.github.knivesbatz.zipshrink`, `LSMinimumSystemVersion` 11.0, the
-`NSServices` entry and the document types (any file or folder, rank
-Alternate, so ZipShrink appears in Open With but never becomes a default
-app), and the texts macOS shows when it asks for access to protected
-folders. The bundle is ad-hoc signed inside out (the command line tool, then
-the app) and published twice: `ZipShrink.dmg` for people and
-`ZipShrink-mac.zip` (made with `ditto`, no extended attributes) for the
-updater. It is not notarized, so the first start needs **Open Anyway** in
-System Settings; the app clears the quarantine flag from its own bundle
-afterwards, so the bundled command line tool is not blocked separately.
-`packaging/macos/check-app.sh` and `check-update.sh` are the checks CI runs.
+  zipshrink-setup    `ZipShrink-setup.exe`, the Windows installer and uninstaller
+packaging/           the scripts that build the Windows installer and the Mac app, and CI checks

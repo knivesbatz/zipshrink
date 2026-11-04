@@ -114,7 +114,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-gnu
-      - run: sudo apt-get update && sudo apt-get install -y mingw-w64 nsis
+      - run: sudo apt-get update && sudo apt-get install -y mingw-w64
       - uses: Swatinem/rust-cache@v2
       - run: packaging/build-windows.sh
         env:

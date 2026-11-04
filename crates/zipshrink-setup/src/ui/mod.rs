@@ -32,7 +32,16 @@ const EXIT_UNSUPPORTED: i32 = 3;
 
 /// Opens the installer window and returns the process exit code.
 pub fn run(mode: Mode, backend: &'static dyn Backend) -> i32 {
-    let code = Arc::new(AtomicI32::new(EXIT_CANCELLED));
+    // Asked before any window: an unsupported Windows must end in 3 even
+    // when no window can be opened on it.
+    let unsupported = match mode {
+        Mode::Install => backend.check_system().err().or_else(|| {
+            demo_switch(backend, "ZIPSHRINK_SETUP_DEMO_UNSUPPORTED")
+                .map(|_| format!("ZipShrink {} needs 64-bit Windows 10 or Windows 11.", crate::VERSION))
+        }),
+        Mode::Uninstall => None,
+    };
+    let code = Arc::new(AtomicI32::new(if unsupported.is_some() { EXIT_UNSUPPORTED } else { EXIT_CANCELLED }));
     let (title, size) = match mode {
         Mode::Install => ("Install ZipShrink", install::SIZE),
         Mode::Uninstall => ("Uninstall ZipShrink", uninstall::SIZE),
@@ -55,7 +64,7 @@ pub fn run(mode: Mode, backend: &'static dyn Backend) -> i32 {
     }
     let make = |renderer| eframe::NativeOptions { viewport: viewport.clone(), renderer, centered: true, ..Default::default() };
     let start = |opts: eframe::NativeOptions| {
-        let code = code.clone();
+        let (code, unsupported) = (code.clone(), unsupported.clone());
         eframe::run_native(
             title,
             opts,
@@ -65,7 +74,7 @@ pub fn run(mode: Mode, backend: &'static dyn Backend) -> i32 {
                 design::fonts::install(&cc.egui_ctx);
                 theme::install_style(&cc.egui_ctx);
                 let app: Box<dyn eframe::App> = match mode {
-                    Mode::Install => Box::new(install::Installer::new(backend, code)),
+                    Mode::Install => Box::new(install::Installer::new(backend, code, unsupported)),
                     Mode::Uninstall => Box::new(uninstall::Uninstaller::new(backend, code)),
                 };
                 Ok(app)
@@ -80,10 +89,13 @@ pub fn run(mode: Mode, backend: &'static dyn Backend) -> i32 {
         eprintln!("renderer unavailable ({e}); trying the other one");
         let second = if prefer_gl { eframe::Renderer::Wgpu } else { eframe::Renderer::Glow };
         if let Err(e) = start(make(second)) {
-            let msg = format!("The ZipShrink installer could not open its window: {e}");
+            let msg = match &unsupported {
+                Some(reason) => reason.clone(),
+                None => format!("The ZipShrink installer could not open its window: {e}"),
+            };
             eprintln!("{msg}");
             let _ = rfd::MessageDialog::new().set_title(title).set_description(msg).set_level(rfd::MessageLevel::Error).show();
-            return EXIT_FAILED;
+            return if unsupported.is_some() { EXIT_UNSUPPORTED } else { EXIT_FAILED };
         }
     }
     code.load(Ordering::SeqCst)
