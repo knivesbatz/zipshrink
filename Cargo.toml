@@ -3,16 +3,16 @@ resolver = "2"
 members = ["crates/zipshrink-core", "crates/zipshrink-cli", "crates/zipshrink-gui", "crates/zipshrink-update"]
 
 [workspace.package]
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
-rust-version = "1.89"
+rust-version = "1.95"
 license = "MIT"
 repository = "https://github.com/knivesbatz/zipshrink"
 authors = ["ZipShrink contributors"]
 
 [workspace.dependencies]
-zipshrink-core = { path = "crates/zipshrink-core", version = "1.0.0" }
-zipshrink-update = { path = "crates/zipshrink-update", version = "1.0.0" }
+zipshrink-core = { path = "crates/zipshrink-core", version = "1.1.0" }
+zipshrink-update = { path = "crates/zipshrink-update", version = "1.1.0" }
 anyhow = "1.0.100"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
