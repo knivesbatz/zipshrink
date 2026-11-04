@@ -90,7 +90,7 @@ struct Common {
     /// Compression level: 0 stores, 1 is fastest, 9 is smallest
     #[arg(short, long, default_value_t = 6, value_parser = clap::value_parser!(u32).range(0..=9))]
     level: u32,
-    /// Free space to keep on the destination drive, e.g. 512M or 2G
+    /// Free space to keep on the destination disk, e.g. 512M or 2G
     #[arg(long, value_name = "SIZE", default_value = "256M", value_parser = parse_size)]
     min_free: u64,
     /// Split into this many separate, independently readable ZIP files of about equal size
@@ -165,7 +165,7 @@ struct ResumeArgs {
     /// Do not ask for confirmation before continuing to delete originals
     #[arg(short, long)]
     yes: bool,
-    /// Change the free space to keep on the destination drive
+    /// Change the free space to keep on the destination disk
     #[arg(long, value_name = "SIZE", value_parser = parse_size)]
     min_free: Option<u64>,
     #[command(flatten)]
@@ -292,7 +292,7 @@ fn print_preflight(p: &space::Preflight) {
     );
     if p.delete_originals {
         println!(
-            "Deletion:     originals deleted as they are archived; {} of them are on the destination drive",
+            "Deletion:     originals deleted as they are archived; {} of them are on the destination disk",
             human_bytes(p.same_volume_bytes)
         );
     }
@@ -508,8 +508,9 @@ fn cmd_update(a: UpdateArgs) -> u8 {
     if a.check {
         return exit::OK;
     }
-    if up::method() == up::Method::ReleasePage {
-        println!("Download it from the release page (this copy is portable or not on Windows).");
+    let method = up::method();
+    if !method.installs_itself() {
+        println!("{}", method.explain());
         up::open_url(&rel.page);
         return exit::OK;
     }
@@ -529,6 +530,20 @@ fn cmd_update(a: UpdateArgs) -> u8 {
         }
     };
     eprintln!("Verified the SHA-256 of {}.", path.display());
+    if method == up::Method::ReplaceApp {
+        // Unpacks, checks and swaps in the new ZipShrink.app right here.
+        eprintln!("Checking and installing ZipShrink {}...", rel.version);
+        return match up::launch_installer(&path, false) {
+            Ok(()) => {
+                eprintln!("Installed ZipShrink {}. If the ZipShrink app is open, quit it and open it again.", rel.version);
+                exit::OK
+            }
+            Err(e) => {
+                err(format!("cannot install the update: {e}"));
+                exit::ERROR
+            }
+        };
+    }
     eprintln!("Installing ZipShrink {} in the background; it takes a few seconds.", rel.version);
     match up::launch_installer(&path, false) {
         Ok(()) => exit::OK,
