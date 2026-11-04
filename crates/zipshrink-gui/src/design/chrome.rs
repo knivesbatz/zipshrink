@@ -94,8 +94,21 @@ pub fn drag_region(ui: &mut Ui, rect: Rect, salt: &str) {
         ui.ctx().send_viewport_cmd(ViewportCommand::StartDrag);
     }
     if resp.double_clicked() {
-        zoom(ui.ctx());
+        title_double_click(ui.ctx());
     }
+}
+
+/// Double-click on the title bar: zoom, or on macOS whatever Desktop & Dock
+/// settings ask for.
+fn title_double_click(ctx: &Context) {
+    #[cfg(target_os = "macos")]
+    match crate::macos::title_double_click() {
+        crate::macos::TitleDoubleClick::Zoom => zoom(ctx),
+        crate::macos::TitleDoubleClick::Minimize => ctx.send_viewport_cmd(ViewportCommand::Minimized(true)),
+        crate::macos::TitleDoubleClick::Nothing => {}
+    }
+    #[cfg(not(target_os = "macos"))]
+    zoom(ctx);
 }
 
 /// Invisible edges and corners that resize a frameless window.

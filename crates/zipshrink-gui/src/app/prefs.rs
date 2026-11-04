@@ -140,7 +140,14 @@ pub fn page(app: &mut App, ui: &mut Ui) {
                                 }
                             }
                         });
-                        design::help(ui, "Auto follows the appearance set in Windows.");
+                        design::help(
+                            ui,
+                            if cfg!(target_os = "macos") {
+                                "Auto follows the appearance set in System Settings."
+                            } else {
+                                "Auto follows the appearance set in Windows."
+                            },
+                        );
                     });
                     ui.add_space(space::L);
                     let system = motion::system_prefers_reduced();
@@ -154,7 +161,9 @@ pub fn page(app: &mut App, ui: &mut Ui) {
                         });
                         design::help(
                             ui,
-                            if system {
+                            if system && cfg!(target_os = "macos") {
+                                "On because Reduce motion is turned on in System Settings > Accessibility > Display."
+                            } else if system {
                                 "On because animation effects are turned off in Windows Settings."
                             } else {
                                 "Replaces sliding and scaling with simple fades."

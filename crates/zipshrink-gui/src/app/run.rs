@@ -420,7 +420,7 @@ pub fn done_page(app: &mut App, ui: &mut Ui) {
             ui.add_space(space::XL);
             ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
                 if finished_all {
-                    if Button::primary(if cfg!(windows) { "Show in Explorer" } else { "Show in Folder" }).show(ui).clicked() {
+                    if Button::primary(if cfg!(windows) { "Show in Explorer" } else if cfg!(target_os = "macos") { "Show in Finder" } else { "Show in Folder" }).show(ui).clicked() {
                         act = Some(DoneAct::Reveal(last.paths.output.clone()));
                     }
                     if Button::secondary("Verify Again").show(ui).clicked() {
@@ -430,7 +430,7 @@ pub fn done_page(app: &mut App, ui: &mut Ui) {
                     if matches!(last.outcome, Outcome::Stopped { resumable: true, .. }) && Button::primary("Resume").show(ui).clicked() {
                         act = Some(DoneAct::Resume(last.paths.partial.clone(), !last.delete_requested));
                     }
-                    if Button::secondary("Show in Folder").show(ui).clicked() {
+                    if Button::secondary(if cfg!(target_os = "macos") { "Show in Finder" } else { "Show in Folder" }).show(ui).clicked() {
                         act = Some(DoneAct::Reveal(last.paths.partial.clone()));
                     }
                 }
