@@ -128,11 +128,9 @@ pub struct Installer {
 }
 
 impl Installer {
-    pub fn new(backend: &'static dyn Backend, code: Arc<AtomicI32>) -> Self {
-        let unsupported = backend.check_system().err().or_else(|| {
-            super::demo_switch(backend, "ZIPSHRINK_SETUP_DEMO_UNSUPPORTED")
-                .map(|_| format!("ZipShrink {} needs 64-bit Windows 10 or Windows 11.", crate::VERSION))
-        });
+    /// `unsupported`: what `Backend::check_system` said (ui::run asks it
+    /// before the window opens).
+    pub fn new(backend: &'static dyn Backend, code: Arc<AtomicI32>, unsupported: Option<String>) -> Self {
         let existing = if unsupported.is_none() { backend.detect() } else { None };
         if unsupported.is_some() {
             code.store(EXIT_UNSUPPORTED, Ordering::SeqCst);
@@ -292,6 +290,17 @@ impl Installer {
         ctx.send_viewport_cmd(ViewportCommand::Close);
     }
 
+    /// Quits with "cancelled", unless the install has already started
+    /// changing files (or has ended): then the window stays and the exit
+    /// code stays what the install decides.
+    fn quit_cancelled(&mut self, ctx: &egui::Context) {
+        if self.task.as_ref().is_some_and(|t| !t.cancel()) {
+            return;
+        }
+        self.code.store(EXIT_CANCELLED, Ordering::SeqCst);
+        self.quit(ctx);
+    }
+
     /// Watches the background install; moves to Summary when it ends.
     fn poll(&mut self) {
         if self.step != Step::Installation {
@@ -309,20 +318,33 @@ impl Installer {
         if !ctx.input(|i| i.viewport().close_requested()) || self.quitting {
             return;
         }
+        let phase = self.installing();
         let ask = self.unsupported.is_none()
             && match self.step {
                 Step::Introduction | Step::Summary => false,
-                Step::Installation => self.installing() == Some(Phase::Waiting),
+                Step::Installation => phase == Some(Phase::Waiting),
                 _ => true,
             };
-        let busy = self.step == Step::Installation && self.installing() == Some(Phase::Working);
-        if ask || busy {
+        let busy = self.step == Step::Installation && phase == Some(Phase::Working);
+        // A task that started changing files since `phase` was read refuses
+        // the cancel: the window then stays too.
+        let started = !ask && !busy && self.task.as_ref().is_some_and(|t| !t.cancel() && !matches!(t.snapshot().phase, Phase::Done(_)));
+        if ask || busy || started {
             ctx.send_viewport_cmd(ViewportCommand::CancelClose);
             if ask && self.sheet != Some(Sheet::Quit) {
                 self.open_sheet(Sheet::Quit);
             }
-        } else if let Some(t) = &self.task {
-            t.cancel();
+        }
+    }
+
+    /// The quit sheet asks about a wait that may have ended: once the
+    /// install is changing files (or has finished) it no longer applies.
+    fn dismiss_stale_quit(&mut self) {
+        if self.sheet != Some(Sheet::Quit) || self.task.is_none() {
+            return;
+        }
+        if self.step != Step::Installation || self.installing() != Some(Phase::Waiting) {
+            self.sheet = None;
         }
     }
 
@@ -509,23 +531,22 @@ impl Installer {
         let shown = design::elide_start(ui, &path, typ::body_medium(), ui.available_width());
         design::text(ui, shown, typ::body_medium(), p.text).on_hover_text(path);
         ui.add_space(space::XS);
+        let disk = self.disk();
+        let short = self.free.filter(|_| !self.enough_space());
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = space::M;
             let change = ui.add_enabled_ui(!upgrade, |ui| Button::secondary("Change Install Location…").show(ui)).inner;
             if change.clicked() {
                 self.pick_folder();
             }
-            let disk = self.disk();
-            match self.free {
-                Some(f) if !self.enough_space() => {
-                    design::text(ui, format!("Not enough space on “{disk}”: {} available.", size(f)), typ::callout(), p.red);
-                }
-                Some(f) => {
-                    design::text(ui, format!("{} available on “{disk}”", size(f)), typ::callout(), p.text_secondary);
-                }
-                None => {}
+            if let (Some(f), None) = (self.free, short) {
+                design::text(ui, format!("{} available on “{disk}”", size(f)), typ::callout(), p.text_secondary);
             }
         });
+        // On its own line: a long disk name must not crowd the button.
+        if let Some(f) = short {
+            design::para(ui, format!("Not enough space on “{disk}”: {} available.", size(f)), typ::callout(), p.red);
+        }
     }
 
     /// Change Install Location…: like the old installer, a folder that is
@@ -735,6 +756,7 @@ impl eframe::App for Installer {
         let p = super::begin_frame(&ctx);
         self.poll();
         self.handle_close(&ctx);
+        self.dismiss_stale_quit();
         window_chrome(ui, "Install ZipShrink");
 
         let full = ui.max_rect();
@@ -801,8 +823,7 @@ impl Installer {
                     Some(0) => self.sheet = None,
                     Some(1) => {
                         self.sheet = None;
-                        self.code.store(EXIT_CANCELLED, Ordering::SeqCst);
-                        self.quit(ctx);
+                        self.quit_cancelled(ctx);
                     }
                     Some(_) => {
                         self.sheet = None;
@@ -827,9 +848,10 @@ impl Installer {
                 match sheet::show(ctx, &spec, self.sheet_serial) {
                     Some(0) => self.sheet = None,
                     Some(_) => {
+                        // Refused when the install started meanwhile; the
+                        // sheet goes and the window shows the progress.
                         self.sheet = None;
-                        self.code.store(EXIT_CANCELLED, Ordering::SeqCst);
-                        self.quit(ctx);
+                        self.quit_cancelled(ctx);
                     }
                     None => {}
                 }

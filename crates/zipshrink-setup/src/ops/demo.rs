@@ -21,8 +21,9 @@ impl Backend for Demo {
     fn default_dir(&self) -> PathBuf {
         PathBuf::from(r"C:\Users\You\AppData\Local\Programs\ZipShrink")
     }
+    /// `ZIPSHRINK_SETUP_DEMO_FREE=<bytes>` shows a nearly full disk.
     fn free_space(&self, _dir: &Path) -> Option<u64> {
-        Some(212 << 30)
+        Some(std::env::var("ZIPSHRINK_SETUP_DEMO_FREE").ok().and_then(|v| v.parse().ok()).unwrap_or(212 << 30))
     }
     fn app_running(&self, _dir: &Path) -> bool {
         false

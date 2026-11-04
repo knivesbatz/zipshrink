@@ -10,7 +10,8 @@ crates/
   zipshrink-cli      `zipshrink` command line tool
   zipshrink-gui      `zipshrink-gui` desktop app (egui/eframe)
   zipshrink-update   update check, verified installer download, settings
-packaging/           Windows installer (NSIS) and its build script
+  zipshrink-setup    `ZipShrink-setup.exe`, the installer and uninstaller
+packaging/           the script that builds the installer
 scripts/             icon and license generators
 ```
 
@@ -154,17 +155,32 @@ CI builds a `zipshrink.exe` with `ZIPSHRINK_UPDATE_FROM=0.0.1`, so
 `zipshrink update` downloads, verifies and installs the published release on
 a real Windows runner.
 
-## Installer (`packaging/windows/zipshrink.nsi`)
+## Installer (`zipshrink-setup`)
 
-One NSIS installer, `ZipShrink-setup.exe`, built on Linux by
-`packaging/build-windows.sh`. It installs for the current user into
+`ZipShrink-setup.exe`, built on Linux by `packaging/build-windows.sh`, is a
+Rust program that carries the files to install (compressed, embedded at
+build time from the folder named by `ZIPSHRINK_SETUP_PAYLOAD`). Its window
+follows macOS Big Sur's Installer, built from the app's design module
+(`crates/zipshrink-gui/src/design`, included by path): Introduction,
+License, Destination Select, Installation Type (Customize lists the
+optional parts), Installation and Summary. Copied into the install folder as
+`Uninstall.exe`, the same program is the uninstaller.
+
+It replaces the NSIS installer of 0.2-1.0 and keeps its contract, so
+upgrades and the 1.0 updater work unchanged: per user into
 `%LOCALAPPDATA%\Programs\ZipShrink` (no administrator rights), the folder
-every earlier version used on Windows 10, and records it in
-`HKCU\Software\ZipShrink` and an Add/Remove Programs entry. Optional parts:
-Start menu and desktop shortcuts, the Explorer right-click menu, and the
-`zipshrink` command on the user's PATH; an upgrade keeps exactly the parts
-the earlier installation had. Silent (`/S`), it waits up to a minute for a
-running ZipShrink to close; `/RESTART` starts the app again afterwards. It
-removes a copy installed from an earlier `.msi` package, and refuses to
-install on Windows older than 10 or on 32-bit Windows (exit code 3 when
-silent), since older ZipShrink versions there are offered this update too.
+recorded in `HKCU\Software\ZipShrink` and the same Add/Remove Programs
+values; `/S` silent, `/RESTART` to start the app afterwards, `/D=` for the
+folder and `_?=` for the uninstaller; exit codes 0 done, 1 failed, 2
+cancelled, 3 Windows older than 10. Optional parts: Start menu and desktop
+shortcuts, the Explorer right-click menu, and the `zipshrink` command on
+the user's PATH; an upgrade keeps exactly the parts the earlier
+installation had. It waits for a running ZipShrink to close (a minute when
+silent), writes every new file beside the old one before replacing any,
+and removes a copy installed from an earlier `.msi` package.
+
+- `src/ops`: the `Backend` trait; `windows.rs` does the work, `demo.rs`
+  pretends (builds without a payload, and non-Windows hosts).
+- `src/ui`: the window; `task.rs` runs the install on a thread, and decides
+  under one lock whether quitting still cancels it or it has started.
+- `src/main.rs`: the command line and the silent mode.

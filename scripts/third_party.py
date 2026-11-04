@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Writes THIRD_PARTY_LICENSES.md from `cargo metadata` for the shipped
-Windows programs, and fails if any dependency has a license outside the allow list."""
+Windows programs (the app, the command-line tool and the installer, which
+embeds them), and fails if any dependency has a license outside the allow list."""
 import json, subprocess, sys
 from collections import defaultdict
 from pathlib import Path
@@ -14,7 +15,7 @@ for target in ["x86_64-pc-windows-gnu"]:
     nodes = {n["id"]: n for n in meta["resolve"]["nodes"]}
     pkgs = {p["id"]: p for p in meta["packages"]}
     # Only normal (non-dev, non-build) dependencies of the shipped binaries.
-    stack = [p["id"] for p in meta["packages"] if p["name"] in ("zipshrink-cli", "zipshrink-gui")]
+    stack = [p["id"] for p in meta["packages"] if p["name"] in ("zipshrink-cli", "zipshrink-gui", "zipshrink-setup")]
     seen = set()
     while stack:
         i = stack.pop()
