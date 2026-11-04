@@ -1,5 +1,6 @@
 //! The real installer actions (Windows only). See mod.rs for the contract
-//! and packaging/windows/zipshrink.nsi for the installer this replaces:
+//! and the NSIS script this replaces (packaging/windows/zipshrink.nsi in
+//! git history up to 1.0):
 //! the folder, registry values, shortcut names and command line match it,
 //! so an upgrade over an NSIS-installed ZipShrink (0.2 to 1.0) is seamless
 //! and Add/Remove Programs keeps working.
@@ -221,14 +222,21 @@ fn delete_after_exit(file: &Path, dir: Option<&Path>) {
     let script = format!(
         "/d /s /c \"for /l %i in (1,1,600) do @(ping -n 2 127.0.0.1 >nul & del /f /q \"{f}\" >nul 2>&1 & if not exist \"{f}\" ({rmdir}exit))\""
     );
-    let _ = Command::new(system_dir().join("cmd.exe"))
-        .raw_arg(script)
-        .current_dir(std::env::temp_dir())
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP)
-        .spawn();
+    let start = |flags: u32| {
+        Command::new(system_dir().join("cmd.exe"))
+            .raw_arg(&script)
+            .current_dir(std::env::temp_dir())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | flags)
+            .spawn()
+    };
+    // Out of setup's job, if any, so it is not ended with setup (as in
+    // `launch`); not every job allows that.
+    if start(CREATE_BREAKAWAY_FROM_JOB).is_err() {
+        let _ = start(0);
+    }
 }
 
 /// Removes `<dir>\Uninstall.exe`. When that is this very program, it is
@@ -253,16 +261,27 @@ fn remove_uninstaller(dir: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// The user's PATH as stored (unexpanded) and its registry type.
-fn user_path() -> (String, u32) {
-    reg::open(ENV_KEY, false).and_then(|k| k.get_str("Path")).unwrap_or((String::new(), REG_EXPAND_SZ))
+/// The user's PATH as stored (unexpanded) and its registry type; empty
+/// when there is none. `Err` when a Path value is there but is not text
+/// or cannot be read: it must then be left exactly as it is.
+fn user_path() -> Result<(String, u32), String> {
+    let Some(key) = reg::open(ENV_KEY, false) else { return Ok((String::new(), REG_EXPAND_SZ)) };
+    Ok(key.read_str("Path")?.unwrap_or((String::new(), REG_EXPAND_SZ)))
 }
 
 /// Adds (`add`) or removes `dir` from the user's PATH, keeping the value's
 /// type (normally REG_EXPAND_SZ, so `%USERPROFILE%\...` entries keep
 /// working) and every other entry as written. True when it changed.
+/// A PATH that cannot be read as text is not touched (and that is logged):
+/// rewriting it would lose the user's entries.
 fn edit_path(dir: &Path, add: bool) -> Result<bool, String> {
-    let (cur, ty) = user_path();
+    let (cur, ty) = match user_path() {
+        Ok(p) => p,
+        Err(e) => {
+            crate::note(&format!("the user PATH was left unchanged: {e}"));
+            return Ok(false);
+        }
+    };
     let new = if add { winpath::list_add(&cur, &s(dir), &expand) } else { winpath::list_remove(&cur, &s(dir), &expand) };
     let Some(new) = new else { return Ok(false) };
     let key = reg::create(ENV_KEY)?;
@@ -451,7 +470,7 @@ impl Windows {
             start_menu: has_link(start_menu_link()),
             desktop: has_link(desktop_link()),
             context_menu: reg::get_str(&format!(r"{}\command", MENU_KEYS[1]), "").is_some_and(|c| !c.is_empty()),
-            path: winpath::list_contains(&user_path().0, &s(dir), &expand),
+            path: user_path().is_ok_and(|(p, _)| winpath::list_contains(&p, &s(dir), &expand)),
         }
     }
 }
@@ -582,6 +601,9 @@ impl Backend for Windows {
 
     fn uninstall(&self, dir: &Path, progress: Progress) -> Result<(), String> {
         progress(0.0, "Preparing…");
+        if !dir.is_absolute() || dir.parent().is_none() {
+            return Err(format!("\"{}\" is not a folder ZipShrink can be removed from.", dir.display()));
+        }
         let recorded = reg::get_str(APP_KEY, "InstallDir").is_some_and(|d| same_path(Path::new(&d), dir));
         if !recorded && !dir.join(GUI).exists() && !dir.join(UNINSTALLER).exists() {
             return Err(format!("There is no ZipShrink installation in {}.", dir.display()));

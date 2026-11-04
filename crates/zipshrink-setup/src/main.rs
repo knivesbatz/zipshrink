@@ -34,26 +34,59 @@ fn args() -> Args {
         .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().eq_ignore_ascii_case("uninstall")))
         .unwrap_or(false);
     a.uninstall = a.is_uninstaller;
-    let all: Vec<String> = std::env::args().skip(1).collect();
+    parse(&mut a, std::env::args_os().skip(1).collect());
+    a
+}
+
+/// Reads the switches into `a`. Arguments are taken as the OS gives them
+/// (a folder name need not be valid Unicode).
+fn parse(a: &mut Args, all: Vec<std::ffi::OsString>) {
     for (i, arg) in all.iter().enumerate() {
-        let up = arg.to_ascii_uppercase();
+        let bytes = arg.as_encoded_bytes();
+        let up = String::from_utf8_lossy(bytes).to_ascii_uppercase();
         match up.as_str() {
             "/S" | "--SILENT" => a.silent = true,
             "/RESTART" | "--RESTART" => a.restart = true,
             "/UNINSTALL" | "--UNINSTALL" => a.uninstall = true,
             _ if up.starts_with("/D=") || up.starts_with("_?=") => {
                 // An unquoted path with spaces arrives as several arguments.
-                let rest = std::iter::once(&arg[3..]).chain(all[i + 1..].iter().map(String::as_str)).collect::<Vec<_>>().join(" ");
-                let rest = rest.trim().trim_matches('"');
-                if !rest.is_empty() {
-                    a.dir = Some(std::path::PathBuf::from(rest));
+                let mut rest = std::ffi::OsString::from(ascii_cut(bytes, 3, bytes.len()));
+                for more in &all[i + 1..] {
+                    rest.push(" ");
+                    rest.push(more);
+                }
+                let b = rest.as_encoded_bytes();
+                let (mut start, mut end) = (0, b.len());
+                while start < end && b[start].is_ascii_whitespace() {
+                    start += 1;
+                }
+                while end > start && b[end - 1].is_ascii_whitespace() {
+                    end -= 1;
+                }
+                while start < end && b[start] == b'"' {
+                    start += 1;
+                }
+                while end > start && b[end - 1] == b'"' {
+                    end -= 1;
+                }
+                if start < end {
+                    a.dir = Some(std::path::PathBuf::from(ascii_cut(b, start, end)));
                 }
                 break;
             }
             _ => {}
         }
     }
-    a
+}
+
+/// `bytes[start..end]` of an OS string, where each cut is at the string's
+/// edge or next to an ASCII character.
+fn ascii_cut(bytes: &[u8], start: usize, end: usize) -> &std::ffi::OsStr {
+    debug_assert!(start == 0 || bytes[start - 1].is_ascii() || bytes[start].is_ascii());
+    debug_assert!(end == bytes.len() || bytes[end].is_ascii() || bytes[end - 1].is_ascii());
+    // SAFETY: the bytes come from `OsStr::as_encoded_bytes`, and the encoding
+    // may be split immediately before or after any ASCII character.
+    unsafe { std::ffi::OsStr::from_encoded_bytes_unchecked(&bytes[start..end]) }
 }
 
 fn main() {
@@ -160,5 +193,42 @@ fn silent(a: &Args, backend: &'static dyn ops::Backend) -> i32 {
             }
             1
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsString;
+    use std::path::PathBuf;
+
+    fn parsed(args: Vec<OsString>) -> Args {
+        let mut a = Args { silent: false, restart: false, uninstall: false, is_uninstaller: false, dir: None };
+        parse(&mut a, args);
+        a
+    }
+
+    fn os(args: &[&str]) -> Vec<OsString> {
+        args.iter().map(OsString::from).collect()
+    }
+
+    #[test]
+    fn nsis_switches() {
+        let a = parsed(os(&["/s", "/RESTART", r"/D=C:\Program Files\My", r"Apps\ZipShrink"]));
+        assert!(a.silent && a.restart && !a.uninstall);
+        assert_eq!(a.dir, Some(PathBuf::from(r"C:\Program Files\My Apps\ZipShrink")));
+        assert_eq!(parsed(os(&[r#"_?="C:\x y" "#])).dir, Some(PathBuf::from(r"C:\x y")));
+        assert_eq!(parsed(os(&["/D="])).dir, None);
+        assert!(parsed(os(&["--uninstall"])).uninstall);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_unicode_arguments_do_not_panic() {
+        use std::os::unix::ffi::OsStringExt;
+        let odd = OsString::from_vec(b"/D=/tmp/\xff\xfe dir".to_vec());
+        let a = parsed(vec![OsString::from_vec(b"\xff".to_vec()), OsString::from("/S"), odd]);
+        assert!(a.silent);
+        assert_eq!(a.dir.map(|d| d.into_os_string().into_vec()), Some(b"/tmp/\xff\xfe dir".to_vec()));
     }
 }

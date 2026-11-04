@@ -3,9 +3,9 @@
 ## Requirements
 
 * Rust 1.89 or newer (`rustup`).
-* For the installer: the `x86_64-pc-windows-gnu` target, MinGW-w64 and
-  NSIS 3. On Debian/Ubuntu:
-  `sudo apt install mingw-w64 nsis && rustup target add x86_64-pc-windows-gnu`.
+* For the installer: the `x86_64-pc-windows-gnu` target and MinGW-w64. On
+  Debian/Ubuntu:
+  `sudo apt install mingw-w64 && rustup target add x86_64-pc-windows-gnu`.
 * For building and testing on Linux (development only; ZipShrink ships for
   Windows): `libxkbcommon-dev libgtk-3-dev` for the desktop app.
 
@@ -37,9 +37,17 @@ packaging/build-windows.sh            # writes dist/ZipShrink-setup.exe
 ```
 
 Cross-builds both programs with `cargo build --release --target
-x86_64-pc-windows-gnu` and packs them with `packaging/windows/zipshrink.nsi`.
-`ZipShrink-setup.exe` is the only file a release needs; the release workflow
-uses exactly this script. Build-time settings:
+x86_64-pc-windows-gnu`, puts them in a payload folder with `LICENSE.txt`,
+`THIRD_PARTY_LICENSES.txt` and `README.txt`, then builds the installer
+(`crates/zipshrink-setup`) with `ZIPSHRINK_SETUP_PAYLOAD` naming that
+folder, which it embeds compressed. It prints the installer's size and
+SHA-256. An optional argument is the version being released; it must match
+the crates' version. `ZipShrink-setup.exe` is the only file a release needs;
+the release workflow uses exactly this script.
+
+Built without `ZIPSHRINK_SETUP_PAYLOAD` (a plain `cargo run -p
+zipshrink-setup`, on any platform), the installer is a demonstration that
+changes nothing, for working on its window. Build-time settings:
 
 * `ZIPSHRINK_UPDATE_REPO=owner/repo`: the repository the updater checks
   (default `knivesbatz/zipshrink`).

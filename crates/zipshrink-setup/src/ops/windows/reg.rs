@@ -91,6 +91,13 @@ pub fn delete_if_empty(path: &str) {
 impl Key {
     /// A string value (REG_SZ or REG_EXPAND_SZ, not expanded) and its type.
     pub fn get_str(&self, name: &str) -> Option<(String, u32)> {
+        self.read_str(name).ok().flatten()
+    }
+
+    /// Like `get_str`, but tells a missing value (`Ok(None)`) from one that
+    /// is there and cannot be used as text: another type, not valid
+    /// UTF-16, or unreadable (`Err` with the reason).
+    pub fn read_str(&self, name: &str) -> Result<Option<(String, u32)>, String> {
         let n = wide(name);
         let mut buf: Vec<u16> = vec![0; 512];
         loop {
@@ -102,14 +109,21 @@ impl Key {
                 buf.resize((bytes as usize).div_ceil(2) + 1, 0);
                 continue;
             }
-            if r != ERROR_SUCCESS || (ty != REG_SZ && ty != REG_EXPAND_SZ) {
-                return None;
+            if r == ERROR_FILE_NOT_FOUND {
+                return Ok(None);
+            }
+            if r != ERROR_SUCCESS {
+                return Err(format!("could not read the value {name} ({})", std::io::Error::from_raw_os_error(r as i32)));
+            }
+            if ty != REG_SZ && ty != REG_EXPAND_SZ {
+                return Err(format!("the value {name} is not text (registry type {ty})"));
             }
             let mut s = &buf[..(bytes as usize / 2).min(buf.len())];
             while let [rest @ .., 0] = s {
                 s = rest;
             }
-            return Some((String::from_utf16_lossy(s), ty));
+            let text = String::from_utf16(s).map_err(|_| format!("the value {name} is not valid text"))?;
+            return Ok(Some((text, ty)));
         }
     }
 
