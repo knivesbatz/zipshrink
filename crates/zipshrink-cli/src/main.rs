@@ -509,8 +509,10 @@ fn cmd_update(a: UpdateArgs) -> u8 {
         return exit::OK;
     }
     let method = up::method();
+    // How this copy gets updated, or why it cannot update itself (say, a
+    // Mac app still running from its disk image).
+    println!("{}", method.explain());
     if !method.installs_itself() {
-        println!("{}", method.explain());
         up::open_url(&rel.page);
         return exit::OK;
     }

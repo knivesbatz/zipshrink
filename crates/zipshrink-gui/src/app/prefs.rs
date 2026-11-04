@@ -194,7 +194,7 @@ pub fn page(app: &mut App, ui: &mut Ui) {
                         if design::checkbox(ui, &mut app.settings.check_for_updates, "Automatically keep ZipShrink up to date").changed() {
                             save = true;
                         }
-                        design::help(ui, "Checks GitHub once a week, downloads a new version in the background and checks its SHA-256, then asks before installing.");
+                        design::help(ui, app.updates.how());
                     });
                     ui.add_space(space::L);
                     design::form_row(ui, "Status:", |ui| {
