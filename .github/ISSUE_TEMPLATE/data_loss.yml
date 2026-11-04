@@ -14,7 +14,7 @@ body:
     validations: { required: true }
   - type: input
     id: os
-    attributes: { label: "Operating system and filesystem", placeholder: "Windows 11, NTFS on internal SSD" }
+    attributes: { label: "Operating system and filesystem", placeholder: "Windows 11, NTFS on internal SSD / macOS 15, APFS on an external SSD" }
     validations: { required: true }
   - type: textarea
     id: what

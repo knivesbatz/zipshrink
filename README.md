@@ -9,9 +9,11 @@ the archive grows, so zipping a 200 GB folder needs a little over the space
 of one file, not another 200 GB.
 
 It is a free, open-source desktop app and command-line tool for **64-bit
-Windows 10 and 11**, written in Rust. It has a modern interface with light
-and dark appearance, comes as one installer, and keeps itself up to date.
-Underneath it is a crash-safe, fully verified archiver.
+Windows 10 and 11** and **macOS 11 Big Sur or later** (Apple silicon and
+Intel), written in Rust. It has a modern interface with light and dark
+appearance, comes as one installer on Windows and one app to drag into
+Applications on a Mac, and keeps itself up to date. Underneath it is a
+crash-safe, fully verified archiver.
 
 ![ZipShrink main window](docs/screenshots/main-window.png)
 
@@ -25,6 +27,7 @@ Underneath it is a crash-safe, fully verified archiver.
 - [How it works](#how-it-works)
 - [Is it safe?](#is-it-safe)
 - [Install](#install)
+- [Install on a Mac](#install-on-a-mac)
 - [Using the app](#using-the-app)
 - [Using the command line](#using-the-command-line)
 - [Splitting into several ZIPs](#splitting-into-several-zips)
@@ -60,10 +63,13 @@ a large file is a batch of its own), ZipShrink:
    it (Deflate) onto the end of `NAME.zip.partial`;
 3. checks the file did not change while it was read (size, modification and
    change time, volume and file id); if it did, it re-reads it;
-4. **flushes** the archive to the storage device (`FlushFileBuffers`);
+4. **flushes** the archive to the storage device (`FlushFileBuffers` on
+   Windows, `F_FULLFSYNC` on a Mac);
 5. **reads every entry back** through a second handle that bypasses the file
    cache, compares the header bytes, decompresses the data and compares the
-   result with the CRC-32 and SHA-256 taken from the original;
+   result with the CRC-32 and SHA-256 taken from the original (on a Mac the
+   cached copy is dropped first; where macOS does not allow that, the report
+   says the check was read from the cache);
 6. records the batch in a **durable recovery journal**
    (`NAME.zip.partial.journal`, flushed to disk);
 7. only then, if deletion is on, checks each original once more — same size,
@@ -79,8 +85,8 @@ read again with an independent ZIP reader), renames
 `NAME.zip.partial` to `NAME.zip`, and removes the folders that were emptied.
 
 Archives are plain ZIP (ZIP64 when files or archives exceed 4 GB or 65,535
-entries) and open in Windows Explorer, 7-Zip, WinZip, WinRAR, Info-ZIP
-`unzip` and every other ZIP tool. ZipShrink stores each
+entries) and open in Windows Explorer, the Finder (Archive Utility), 7-Zip,
+WinZip, WinRAR, Info-ZIP `unzip` and every other ZIP tool. ZipShrink stores each
 file's SHA-256 in an extra field that other tools ignore, so `zipshrink verify`
 can check archives it made far more strictly than CRC-32 alone.
 
@@ -99,9 +105,15 @@ deleting anything it cannot prove is safely archived.
 - **Changed files are kept.** A file modified after it was compressed is not
   deleted; the archive holds the version that was verified.
 - **Links are never followed.** Junctions, symbolic links and other reparse
-  points (including OneDrive placeholders) are skipped and left in place.
-  Nothing outside the folders you selected is read or deleted.
-- **Read-only files are kept** unless you allow them to be deleted.
+  points (including OneDrive placeholders) are skipped and left in place, as
+  are, on a Mac, iCloud Drive files that are not downloaded and other disks
+  mounted inside a selected folder. Nothing outside the folders you selected
+  is read or deleted.
+- **Read-only files are kept** unless you allow them to be deleted (on a
+  Mac, so are files locked in the Finder).
+- **What a ZIP cannot hold is not thrown away.** On a Mac, a file or folder
+  that carries Finder tags, a Finder comment, a resource fork or similar
+  macOS metadata is archived but not deleted, and the report says why.
 - **Crashes, power cuts and full disks are survivable.** Everything committed
   stays in the partial archive; `resume` cuts off any half-written entry and
   carries on. Temporary archives and journals are never deleted after a
@@ -121,7 +133,7 @@ journal write), injects
 disk-full and I/O errors, damages journals and partial archives, then resumes
 and checks with an independent ZIP reader that every original is either still
 present unchanged or in the final archive with an identical SHA-256. The suite
-runs on Windows and Linux in CI.
+runs on Windows, macOS (Apple silicon and Intel) and Linux in CI.
 
 **Still: deleted originals are gone.** After the job, the archive is the only
 copy. Keep backups of anything irreplaceable, and do not use deletion on
@@ -130,10 +142,11 @@ for the full design and its limits.
 
 ## Install
 
-Download **`ZipShrink-setup.exe`** from the
+On Windows, download **`ZipShrink-setup.exe`** from the
 [latest release](https://github.com/knivesbatz/zipshrink/releases/latest) and
 run it. That one file is all you need, on 64-bit Windows 10 or 11. ZipShrink
-then [keeps itself up to date](#updates).
+then [keeps itself up to date](#updates). On a Mac, see
+[Install on a Mac](#install-on-a-mac).
 
 - It installs for your user account, with no administrator rights needed.
 - It adds a Start menu entry and, optionally, a desktop icon, a "Compress with
@@ -153,6 +166,56 @@ so only one ZipShrink remains. Finish unfinished jobs before upgrading from
 0.2–0.4: version 1.0 cannot continue them (the journal format changed), but
 `zipshrink salvage` rebuilds a ZIP from what they hold.
 
+## Install on a Mac
+
+Download **`ZipShrink.dmg`** from the
+[latest release](https://github.com/knivesbatz/zipshrink/releases/latest),
+open it and drag **ZipShrink** onto **Applications**. It runs on macOS 11
+Big Sur or later, on Apple silicon and Intel Macs, and then
+[keeps itself up to date](#updates). (`ZipShrink-mac.zip` in the release is
+the same app for the updater; you do not need it.)
+
+ZipShrink is not notarized by Apple yet, so the first time you open it macOS
+refuses with "Apple could not verify 'ZipShrink' is free of malware" or
+"'ZipShrink' cannot be opened because the developer cannot be verified".
+To open it anyway, once:
+
+1. Click **Done** (or **OK**) in that message.
+2. Open **System Settings > Privacy & Security** (on macOS 11 and 12:
+   **System Preferences > Security & Privacy > General**), scroll down to
+   "ZipShrink was blocked to protect your Mac" and click **Open Anyway**.
+3. Click **Open** in the question that follows, and enter your password if
+   asked.
+
+On macOS 14 and earlier, Control-clicking ZipShrink in Applications and
+choosing **Open** works too. If macOS ever says ZipShrink "is damaged and
+can't be opened", the download was changed on the way; download it again.
+
+Open ZipShrink from Applications rather than from the disk image or the
+Downloads folder: macOS runs apps from those places from a temporary
+read-only copy, which cannot update itself (ZipShrink tells you so).
+
+- **Right-click in the Finder.** Select files or folders, right-click and
+  choose **Services > Compress with ZipShrink** (when only a few services
+  are installed, macOS lists it at the bottom of the menu itself). The
+  entry appears after ZipShrink has been opened once. It
+  can be turned off or given a keyboard shortcut in **System Settings >
+  Keyboard > Keyboard Shortcuts… > Services > Files and Folders** (on
+  macOS 11 and 12: **System Preferences > Keyboard > Shortcuts >
+  Services**). Dropping files on ZipShrink's Dock icon, or choosing it in
+  **Open With**, works the same way.
+- **The `zipshrink` command.** Choose **ZipShrink > Install Command Line
+  Tool…** (it asks for your password), or link it yourself:
+  `sudo ln -sf /Applications/ZipShrink.app/Contents/MacOS/zipshrink /usr/local/bin/zipshrink`.
+- **Privacy.** The first time ZipShrink reads your Desktop, Documents or
+  Downloads folder, or an external or network disk, macOS asks for your
+  permission. Files you hand to ZipShrink yourself (right-click, drag and
+  drop, Open) need no extra permission. Because ZipShrink is not signed with
+  an Apple developer certificate, macOS may ask again after an update.
+- **Uninstall.** Quit ZipShrink and drag it from Applications to the Trash.
+  Its settings are in `~/Library/Application Support/ZipShrink`; delete that
+  folder too, and `/usr/local/bin/zipshrink` if you installed the command.
+
 ## Using the app
 
 ZipShrink's window follows the design of macOS Big Sur: a sidebar with
@@ -162,8 +225,9 @@ pop-up menus and checkboxes, and Finder-style lists, in light and dark.
 1. Drag files and folders onto the window, or click **+** (Add Files) or the
    folder button (Add Folder) in the toolbar. You can also select files and
    folders in File Explorer, right-click and choose **Compress with
-   ZipShrink…** (on Windows 11 it is under **Show more options**); everything
-   you selected opens in one ZipShrink window.
+   ZipShrink…** (on Windows 11 it is under **Show more options**), or in the
+   Finder and choose **Services > Compress with ZipShrink**; everything you
+   selected opens in one ZipShrink window.
 2. Set **Save As** and **Where**, the **Compression** level, and optionally
    **Split** it into several ZIPs: into a number of files, or into files of a
    size you choose (for example 650 MB each).
@@ -172,7 +236,7 @@ pop-up menus and checkboxes, and Finder-style lists, in light and dark.
 4. Look at **Estimate**: a storage bar shows how much space the job needs
    against what is free on the drive, with the estimated archive size (from
    compressing samples of your files) and whether it fits.
-5. Click **Compress** (Ctrl+Enter).
+5. Click **Compress** (Ctrl+Enter; ⌘Return on a Mac).
 
 ![Deletion must be confirmed](docs/screenshots/delete-confirmation.png)
 
@@ -185,13 +249,13 @@ the next safe point; you can resume later, even after closing the app.
 
 When it finishes you get the archive location, original and final sizes, space
 freed, anything skipped or kept and why, and the verification result, with
-**Show in Explorer** and **Verify Again**.
+**Show in Explorer** (**Show in Finder** on a Mac) and **Verify Again**.
 
 ![Finished](docs/screenshots/finished.png)
 
 **Verify** checks any ZIP file entry by entry. **Resume** lists interrupted
 jobs and continues them where they stopped. **Preferences** (the gear in the
-toolbar, or Ctrl+,) sets the appearance (Light, Dark or Auto), reduced
+toolbar, Ctrl+, or ⌘, on a Mac) sets the appearance (Light, Dark or Auto), reduced
 motion and automatic updates, and lists the keyboard shortcuts.
 
 ![ZipShrink in dark mode](docs/screenshots/main-window-dark.png)
@@ -278,13 +342,20 @@ continues all unfinished parts of a set.
 ## Updates
 
 ZipShrink updates itself. Once a week it checks GitHub for a newer release.
-When it finds one and you agree, it downloads the new installer and checks
-its SHA-256 against the one GitHub records for the file (a file that does
-not match is deleted and nothing is installed), then installs it without any
-setup screens: right away, closing and reopening ZipShrink, or when you close
-it. Updates never install while a job is running. The update goes into the
-same folder and keeps your choices, such as no desktop icon. Automatic checks
-can be turned off in the app.
+When it finds one and you agree, it downloads the new installer (on a Mac,
+the new app) and checks its SHA-256 against the one GitHub records for the
+file (a file that does not match is deleted and nothing is installed), then
+installs it without any setup screens: right away, closing and reopening
+ZipShrink, or when you close it. Updates never install while a job is
+running. The update goes into the same folder and keeps your choices, such
+as no desktop icon. Automatic checks can be turned off in the app.
+
+On a Mac the new app also has to pass a signature check and report the
+expected version before it replaces the old one in place, so
+`/Applications/ZipShrink.app` is always a complete app. A copy that macOS
+runs from a temporary location (opened straight from the disk image or the
+Downloads folder), or from a disk it cannot write to, cannot replace itself;
+ZipShrink then says so and offers the release page.
 
 From the command line, `zipshrink update` downloads, verifies and installs
 the newest version, and `zipshrink update --check` only reports it.
@@ -293,18 +364,20 @@ the newest version, and `zipshrink update --check` only reports it.
 
 See [docs/FORMATS_AND_LIMITATIONS.md](docs/FORMATS_AND_LIMITATIONS.md). In short:
 output is ZIP with Deflate or Store (no encryption, no 7z/zstd); NTFS
-alternate data streams, ACLs and extended attributes are not stored; links are
-skipped; FAT destinations cannot hold archives of 4 GB or more; 64-bit
-Windows 10 and 11 only.
+alternate data streams, ACLs, extended attributes and macOS metadata (Finder
+tags and comments, resource forks) are not stored, so originals that carry
+macOS metadata are kept; links are skipped; FAT destinations cannot hold
+archives of 4 GB or more; 64-bit Windows 10 and 11, and macOS 11 or later.
 
 ## Building from source
 
-ZipShrink is a Rust workspace (Rust 1.89 or later):
+ZipShrink is a Rust workspace (Rust 1.95 or later):
 
 ```
 cargo build --release
 cargo test --workspace --features zipshrink-core/failpoints,zipshrink-cli/failpoints
 packaging/build-windows.sh   # dist/ZipShrink-setup.exe, cross-built on Linux
+packaging/build-macos.sh     # dist/ZipShrink.dmg and ZipShrink-mac.zip, on a Mac
 ```
 
 See [docs/BUILDING.md](docs/BUILDING.md).

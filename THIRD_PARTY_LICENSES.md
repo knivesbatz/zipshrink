@@ -11,7 +11,7 @@ ZipShrink is MIT licensed. It is built from the Rust crates below, each under th
 * egui's built-in fallback fonts (Ubuntu-Light: Ubuntu Font Licence 1.0; Hack: MIT/Bitstream Vera;
   Noto Emoji: SIL OFL 1.1; emoji-icon-font: MIT/OFL), embedded by the `epaint_default_fonts` crate.
 
-## Crates (263)
+## Crates (306)
 
 ### (MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0
 
@@ -82,6 +82,10 @@ ZipShrink is MIT licensed. It is built from the Rust crates below, each under th
 * vello_cpu 0.2.0 — https://github.com/linebender/vello
 * zeroize 1.9.1 — https://github.com/RustCrypto/utils
 
+### Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT
+
+* rustix 1.1.6 — https://github.com/bytecodealliance/rustix
+
 ### Apache-2.0/MIT
 
 * pollster 1.0.1 — https://github.com/zesterer/pollster
@@ -122,13 +126,29 @@ ZipShrink is MIT licensed. It is built from the Rust crates below, each under th
 
 ### MIT
 
+* block2 0.5.1 — https://github.com/madsmtm/objc2
+* block2 0.6.2 — https://github.com/madsmtm/objc2
 * bytes 1.12.1 — https://github.com/tokio-rs/bytes
 * console 0.16.6 — https://github.com/console-rs/console
+* dispatch 0.2.0 — http://github.com/SSheldon/rust-dispatch
+* dlib 0.5.3 — https://github.com/elinorbgr/dlib
 * fax 0.2.7 — https://github.com/pdf-rs/fax
 * glutin-winit 0.5.0 — https://github.com/rust-windowing/glutin
 * harfrust 0.12.0 — https://github.com/harfbuzz/harfrust
 * indicatif 0.18.6 — https://github.com/console-rs/indicatif
 * libm 0.2.16 — https://github.com/rust-lang/compiler-builtins
+* nix 0.31.3 — https://github.com/nix-rust/nix
+* objc-sys 0.3.5 — https://github.com/madsmtm/objc2
+* objc2 0.5.3 — https://github.com/madsmtm/objc2
+* objc2 0.6.5 — https://github.com/madsmtm/objc2
+* objc2-app-kit 0.2.2 — https://github.com/madsmtm/objc2
+* objc2-core-data 0.2.2 — https://github.com/madsmtm/objc2
+* objc2-core-image 0.2.2 — https://github.com/madsmtm/objc2
+* objc2-encode 4.1.0 — https://github.com/madsmtm/objc2
+* objc2-foundation 0.2.2 — https://github.com/madsmtm/objc2
+* objc2-foundation 0.3.2 — https://github.com/madsmtm/objc2
+* objc2-metal 0.2.2 — https://github.com/madsmtm/objc2
+* objc2-quartz-core 0.2.2 — https://github.com/madsmtm/objc2
 * ordered-float 5.5.1 — https://github.com/reem/rust-ordered-float
 * rfd 0.17.2 — https://github.com/PolyMeilex/rfd
 * simd-adler32 0.3.10 — https://github.com/mcountryman/simd-adler32
@@ -139,13 +159,19 @@ ZipShrink is MIT licensed. It is built from the Rust crates below, each under th
 * tracing-attributes 0.1.31 — https://github.com/tokio-rs/tracing
 * tracing-core 0.1.36 — https://github.com/tokio-rs/tracing
 * unit-prefix 0.5.2 — https://codeberg.org/commons-rs/unit-prefix
+* wayland-sys 0.31.11 — https://github.com/smithay/wayland-rs
 * zip 9.1.3 — https://github.com/zip-rs/zip2
 * zmij 1.0.23 — https://github.com/dtolnay/zmij
+
+### MIT / Apache-2.0
+
+* cgl 0.3.2 — https://github.com/servo/cgl-rs
 
 ### MIT OR Apache-2.0
 
 * accesskit 0.25.2 — https://github.com/AccessKit/accesskit
 * accesskit_consumer 0.39.2 — https://github.com/AccessKit/accesskit
+* accesskit_macos 0.27.2 — https://github.com/AccessKit/accesskit
 * accesskit_windows 0.35.2 — https://github.com/AccessKit/accesskit
 * ahash 0.8.12 — https://github.com/tkaitchuck/ahash
 * allocator-api2 0.2.21 — https://github.com/zakarumych/allocator-api2
@@ -171,6 +197,11 @@ ZipShrink is MIT licensed. It is built from the Rust crates below, each under th
 * colorchoice 1.0.5 — https://github.com/rust-cli/anstyle.git
 * cookie 0.18.2 — https://github.com/SergioBenitez/cookie-rs
 * cookie_store 0.22.1 — https://github.com/pfernie/cookie_store
+* core-foundation 0.10.1 — https://github.com/servo/core-foundation-rs
+* core-foundation 0.9.4 — https://github.com/servo/core-foundation-rs
+* core-foundation-sys 0.8.7 — https://github.com/servo/core-foundation-rs
+* core-graphics 0.23.2 — https://github.com/servo/core-foundation-rs
+* core-graphics-types 0.1.3 — https://github.com/servo/core-foundation-rs
 * cpufeatures 0.3.1 — https://github.com/RustCrypto/utils
 * crc32fast 1.5.3 — https://github.com/srijs/rust-crc32fast
 * crossbeam-channel 0.5.17 — https://github.com/crossbeam-rs/crossbeam
@@ -190,6 +221,7 @@ ZipShrink is MIT licensed. It is built from the Rust crates below, each under th
 * either 1.19.0 — https://github.com/rayon-rs/either
 * emath 0.37.0 — https://github.com/emilk/egui/tree/main/crates/emath
 * epaint 0.37.0 — https://github.com/emilk/egui/tree/main/crates/epaint
+* errno 0.3.14 — https://github.com/lambda-fairy/rust-errno
 * euclid 0.22.14 — https://github.com/servo/euclid
 * fdeflate 0.3.7 — https://github.com/image-rs/fdeflate
 * flate2 1.1.10 — https://github.com/rust-lang/flate2-rs
@@ -208,6 +240,7 @@ ZipShrink is MIT licensed. It is built from the Rust crates below, each under th
 * http 1.5.0 — https://github.com/hyperium/http
 * httparse 1.10.1 — https://github.com/seanmonstar/httparse
 * hybrid-array 0.4.15 — https://github.com/RustCrypto/hybrid-array
+* iana-time-zone 0.1.65 — https://github.com/strawlab/iana-time-zone
 * idna 1.1.0 — https://github.com/servo/rust-url/
 * image 0.25.10 — https://github.com/image-rs/image
 * is_terminal_polyfill 1.70.2 — https://github.com/polyfill-rs/is_terminal_polyfill
@@ -236,11 +269,14 @@ ZipShrink is MIT licensed. It is built from the Rust crates below, each under th
 * profiling 1.0.18 — https://github.com/aclysma/profiling
 * quote 1.0.47 — https://github.com/dtolnay/quote
 * range-alloc 0.1.5 — https://github.com/gfx-rs/range-alloc
+* raw-window-metal 1.1.0 — https://github.com/rust-windowing/raw-window-metal
 * read-fonts 0.41.0 — https://github.com/googlefonts/fontations
 * renderdoc-sys 1.1.0 — https://github.com/ebkalderon/renderdoc-rs
 * rustls-pki-types 1.15.1 — https://github.com/rustls/pki-types
 * rustls-platform-verifier 0.7.1 — https://github.com/rustls/rustls-platform-verifier
 * scopeguard 1.2.0 — https://github.com/bluss/scopeguard
+* security-framework 3.7.0 — https://github.com/kornelski/rust-security-framework
+* security-framework-sys 2.17.0 — https://github.com/kornelski/rust-security-framework
 * serde 1.0.229 — https://github.com/serde-rs/serde
 * serde_core 1.0.229 — https://github.com/serde-rs/serde
 * serde_derive 1.0.229 — https://github.com/serde-rs/serde
@@ -274,6 +310,7 @@ ZipShrink is MIT licensed. It is built from the Rust crates below, each under th
 * weezl 0.1.12 — https://github.com/image-rs/weezl
 * wgpu 30.0.1 — https://github.com/gfx-rs/wgpu
 * wgpu-core 30.0.1 — https://github.com/gfx-rs/wgpu
+* wgpu-core-deps-apple 30.0.1 — https://github.com/gfx-rs/wgpu
 * wgpu-core-deps-windows-linux-android 30.0.1 — https://github.com/gfx-rs/wgpu
 * wgpu-hal 30.0.1 — https://github.com/gfx-rs/wgpu
 * wgpu-naga-bridge 30.0.1 — https://github.com/gfx-rs/wgpu
@@ -309,7 +346,11 @@ ZipShrink is MIT licensed. It is built from the Rust crates below, each under th
 
 ### MIT/Apache-2.0
 
+* bitflags 1.3.2 — https://github.com/bitflags/bitflags
 * ctrlc 3.5.2 — https://github.com/Detegr/rust-ctrlc.git
+* foreign-types 0.5.0 — https://github.com/sfackler/foreign-types
+* foreign-types-macros 0.2.4 — https://github.com/sfackler/foreign-types
+* foreign-types-shared 0.3.1 — https://github.com/sfackler/foreign-types
 * guillotiere 0.7.0 — https://github.com/nical/guillotiere
 * khronos-egl 6.0.0 — https://github.com/timothee-haudebourg/khronos-egl
 * quick-error 2.0.1 — http://github.com/tailhook/quick-error
@@ -353,3 +394,11 @@ ZipShrink is MIT licensed. It is built from the Rust crates below, each under th
 
 * bytemuck 1.25.2 — https://github.com/Lokathor/bytemuck
 * bytemuck_derive 1.12.1 — https://github.com/Lokathor/bytemuck
+* dispatch2 0.3.1 — https://github.com/madsmtm/objc2
+* objc2-app-kit 0.3.2 — https://github.com/madsmtm/objc2
+* objc2-core-foundation 0.3.2 — https://github.com/madsmtm/objc2
+* objc2-core-graphics 0.3.2 — https://github.com/madsmtm/objc2
+* objc2-core-text 0.3.2 — https://github.com/madsmtm/objc2
+* objc2-io-surface 0.3.2 — https://github.com/madsmtm/objc2
+* objc2-metal 0.3.2 — https://github.com/madsmtm/objc2
+* objc2-quartz-core 0.3.2 — https://github.com/madsmtm/objc2
