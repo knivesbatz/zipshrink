@@ -19,7 +19,8 @@ fn main() {
     if let Some(dir) = std::env::var_os("ZIPSHRINK_SETUP_PAYLOAD") {
         let dir = PathBuf::from(dir);
         println!("cargo:rerun-if-changed={}", dir.display());
-        let mut names: Vec<_> = std::fs::read_dir(&dir).expect("payload folder").flatten().map(|e| e.path()).filter(|p| p.is_file()).collect();
+        let mut names: Vec<_> =
+            std::fs::read_dir(&dir).expect("payload folder").flatten().map(|e| e.path()).filter(|p| p.is_file()).collect();
         names.sort();
         for p in names {
             println!("cargo:rerun-if-changed={}", p.display());
