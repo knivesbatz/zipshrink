@@ -500,7 +500,19 @@ fn items(ui: &mut Ui, c: &mut Compress, acts: &mut Vec<Act>) {
                         acts.push(Act::Remove(i));
                         ui.close();
                     }
-                    if design::menu_item(ui, if cfg!(windows) { "Show in Explorer" } else { "Show in Folder" }, false).clicked() {
+                    if design::menu_item(
+                        ui,
+                        if cfg!(windows) {
+                            "Show in Explorer"
+                        } else if cfg!(target_os = "macos") {
+                            "Show in Finder"
+                        } else {
+                            "Show in Folder"
+                        },
+                        false,
+                    )
+                    .clicked()
+                    {
                         crate::worker::reveal(&s.path);
                         ui.close();
                     }
@@ -659,7 +671,14 @@ fn options(ui: &mut Ui, c: &mut Compress, acts: &mut Vec<Act>) {
         ui.horizontal(|ui| {
             ui.add_space(20.0);
             ui.vertical(|ui| {
-                design::help(ui, "Frees space as the archive is built. Each file is deleted permanently, not moved to the Recycle Bin, once its compressed copy has been read back and checked.");
+                design::help(
+                    ui,
+                    if cfg!(target_os = "macos") {
+                        "Frees space as the archive is built. Each file is deleted permanently, not moved to the Trash, once its compressed copy has been read back and checked."
+                    } else {
+                        "Frees space as the archive is built. Each file is deleted permanently, not moved to the Recycle Bin, once its compressed copy has been read back and checked."
+                    },
+                );
                 ui.add_space(2.0);
                 ui.add_enabled_ui(c.delete, |ui| {
                     design::checkbox(ui, &mut c.delete_readonly, "Include read-only files");
