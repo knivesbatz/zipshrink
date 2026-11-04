@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Renders the ZipShrink app icon in the macOS Big Sur style: a rounded
 square (superellipse) with depth, a zipped document in the centre, and a
-soft drop shadow. Writes assets/icon-256.png, icon-48.png and zipshrink.ico.
-Requires Pillow and NumPy."""
+soft drop shadow. Writes assets/icon-1024.png (the macOS AppIcon.icns is
+made from it by packaging/build-macos.sh), icon-256.png, icon-48.png and
+zipshrink.ico. Requires Pillow and NumPy."""
 from pathlib import Path
 
 import numpy as np
@@ -94,6 +95,7 @@ def render():
 
 def main():
     big = render()
+    big.save(assets / "icon-1024.png", optimize=True)
     big.resize((256, 256), Image.LANCZOS).save(assets / "icon-256.png")
     big.resize((48, 48), Image.LANCZOS).save(assets / "icon-48.png")
     big.resize((256, 256), Image.LANCZOS).save(

@@ -1,8 +1,10 @@
 # Architecture
 
-ZipShrink is a Rust workspace that ships as two 64-bit Windows programs,
-`zipshrink-gui.exe` (the desktop app) and `zipshrink.exe` (the command line),
-in one installer. Both use the same engine.
+ZipShrink is a Rust workspace that ships as two programs, the desktop app
+and the command line tool, both using the same engine: on 64-bit Windows,
+`zipshrink-gui.exe` and `zipshrink.exe` in one installer; on macOS 11 or
+later, `ZipShrink.app` (universal: Apple silicon and Intel) with
+`Contents/MacOS/zipshrink-gui` and `Contents/MacOS/zipshrink`.
 
 ```
 crates/
@@ -10,7 +12,7 @@ crates/
   zipshrink-cli      `zipshrink` command line tool
   zipshrink-gui      `zipshrink-gui` desktop app (egui/eframe)
   zipshrink-update   update check, verified installer download, settings
-packaging/           Windows installer (NSIS) and its build script
+packaging/           Windows installer (NSIS), Mac app bundle, their build and check scripts
 scripts/             icon and license generators
 ```
 
@@ -26,7 +28,7 @@ scripts/             icon and license generators
 | `engine` | The `Job`: create, run, batch commit, deletion, finalization, resume, report. |
 | `verify` | Read-back check of one entry (header bytes, parse, inflate, CRC-32, SHA-256) and of a whole archive with the independent `zip` crate. |
 | `salvage` | Rebuilds a readable archive from a partial archive without its journal. |
-| `platform` | OS specifics: no-follow opens, Windows share modes, file identity, flush, uncached reads, verified deletion (including read-only files), no-replace rename, volume ids, free space. The Unix implementation exists for development and tests. |
+| `platform` | OS specifics: no-follow opens, Windows share modes, file identity, flush, uncached reads, verified deletion (including read-only files), no-replace rename, volume ids, file system names, free space. The Unix implementation serves macOS (and Linux for development and tests); on macOS it flushes with `F_FULLFSYNC`, falling back to `F_BARRIERFSYNC` and then `fsync` where a file system refuses it (the report then says the drive cache was not flushed), drops cached pages before the read-back (or reports that it could not), renames with `renamex_np(RENAME_EXCL)`, treats Finder-locked files as read-only, refuses cloud-only (dataless) files and mount points, and keeps originals that carry metadata a ZIP cannot hold (Finder tags and comments, resource forks). |
 | `failpoint` | Named fault-injection points, compiled only with the `failpoints` feature. |
 | `progress` | Events and statistics for the UIs. |
 
@@ -114,14 +116,17 @@ UI thread only draws.
   - `theme.rs`: picks the appearance and cross-fades the palette when it
     changes.
   - `motion.rs`: every animation goes through it, so reduced motion
-    (Windows' "Animation effects" setting or the app's own) makes movement
+    (Windows' "Animation effects", macOS's "Reduce motion", or the app's
+    own setting) makes movement
     instant and fades short.
   - `fonts.rs`: SF Pro and SF Mono when the user has them installed,
     otherwise the bundled Inter and Inter Display. The system's fonts fill in
     other scripts.
   - `icons.rs`: SF-Symbols-style vector icons.
   - `chrome.rs`: the frameless window's traffic lights, drag region, resize
-    edges and Windows 11 rounded corners.
+    edges and Windows 11 rounded corners. On macOS the window keeps the
+    system's own traffic lights, with the content running under the title
+    bar.
   - `widgets.rs`: push and pop-up buttons, checkboxes, segmented controls,
     steppers, fields, forms, tables, progress indicators.
 - `src/app/` holds the window layout (sidebar, unified toolbar, content) and
@@ -134,11 +139,21 @@ UI thread only draws.
   - `updates.rs`: the update flow.
 - `src/instance.rs` keeps one window: Explorer's right-click menu starts one
   process per selected item, and later ones hand their paths to the first
-  through `%APPDATA%\ZipShrink\inbox` and exit.
+  through `%APPDATA%\ZipShrink\inbox` (on macOS
+  `~/Library/Application Support/ZipShrink/inbox`) and exit.
+- `src/macos.rs` connects the app to AppKit: files from Finder's Open With,
+  Dock drops and `open` (the `odoc` Apple Event), the "Compress with
+  ZipShrink" Services entry (`compressFiles:userData:error:`), Quit from the
+  Dock or at logout (the `quit` Apple Event, routed through the window's
+  close path so a running job asks first), and the menu bar. AppKit's calls
+  are queued and taken by the app at the start of each frame.
+- `src/smoke.rs`: with `ZIPSHRINK_SMOKE=<seconds>`, the app reports
+  `ZIPSHRINK_SMOKE ready` and `ZIPSHRINK_SMOKE open <path>` on stderr and
+  closes itself; CI's Mac checks rely on these lines.
 
 ## Updater (`zipshrink-update`)
 
-Queries `https://api.github.com/repos/<owner>/<repo>/releases/latest`
+On Windows, it queries `https://api.github.com/repos/<owner>/<repo>/releases/latest`
 (`<owner>/<repo>` fixed at build time by `ZIPSHRINK_UPDATE_REPO`) over HTTPS
 with the system certificate store, and compares versions. Automatic checks
 run at most once a week (`CHECK_INTERVAL`). When there is a newer release it downloads
@@ -150,9 +165,21 @@ file. `launch_installer` starts it as `ZipShrink-setup.exe /S`, with
 right away (Restart) or when it closes, never while a job runs. Settings (update checks, appearance,
 reduced motion) are kept in `%APPDATA%\ZipShrink\settings.json`.
 
-CI builds a `zipshrink.exe` with `ZIPSHRINK_UPDATE_FROM=0.0.1`, so
-`zipshrink update` downloads, verifies and installs the published release on
-a real Windows runner.
+On macOS it downloads `ZipShrink-mac.zip` instead, checked the same way,
+unpacks it next to the installed app, and accepts it only if it holds one
+`ZipShrink.app` with the same bundle identifier, the release's version, a
+minimum macOS the Mac meets, a valid signature, and a command line tool that
+runs. It then swaps the two bundles in place, so the app's path always holds
+a complete app, and a small background script removes the old copy once
+ZipShrink has exited and, when asked, opens the new one. A copy that macOS
+runs translocated (straight from the disk image or Downloads) or from a
+read-only disk cannot replace itself, and is pointed to the release page.
+Settings are in `~/Library/Application Support/ZipShrink/settings.json`.
+
+CI builds a `zipshrink.exe`, and a Mac app, with `ZIPSHRINK_UPDATE_FROM=0.0.1`
+(the Mac app also says 0.0.1 in its `Info.plist`), so `zipshrink update`
+downloads, verifies and installs the published release on real Windows and
+Mac runners.
 
 ## Installer (`packaging/windows/zipshrink.nsi`)
 
@@ -168,3 +195,21 @@ running ZipShrink to close; `/RESTART` starts the app again afterwards. It
 removes a copy installed from an earlier `.msi` package, and refuses to
 install on Windows older than 10 or on 32-bit Windows (exit code 3 when
 silent), since older ZipShrink versions there are offered this update too.
+
+## Mac app (`packaging/macos/`)
+
+`packaging/build-macos.sh` builds both programs for `aarch64-apple-darwin`
+and `x86_64-apple-darwin` (`MACOSX_DEPLOYMENT_TARGET=11.0`), joins them with
+`lipo`, fills in `packaging/macos/Info.plist` and makes `AppIcon.icns` from
+`assets/icon-1024.png`. The plist sets the bundle identifier
+`io.github.knivesbatz.zipshrink`, `LSMinimumSystemVersion` 11.0, the
+`NSServices` entry and the document types (any file or folder, rank
+Alternate, so ZipShrink appears in Open With but never becomes a default
+app), and the texts macOS shows when it asks for access to protected
+folders. The bundle is ad-hoc signed inside out (the command line tool, then
+the app) and published twice: `ZipShrink.dmg` for people and
+`ZipShrink-mac.zip` (made with `ditto`, no extended attributes) for the
+updater. It is not notarized, so the first start needs **Open Anyway** in
+System Settings; the app clears the quarantine flag from its own bundle
+afterwards, so the bundled command line tool is not blocked separately.
+`packaging/macos/check-app.sh` and `check-update.sh` are the checks CI runs.
