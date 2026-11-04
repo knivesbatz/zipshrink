@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Template for ZipShrink.app/Contents/Info.plist. packaging/build-macos.sh
+  replaces @VERSION@ (e.g. 1.1.0) and @BUILD@ (its numeric part) before the
+  bundle is signed; editing the plist after signing breaks the signature.
+
+  CFBundleIdentifier and CFBundleExecutable are relied on by the updater
+  and by installed copies; never change them. Never add
+  LSMultipleInstancesProhibited (the updater relaunches with `open -n`, and
+  the app keeps a single window itself) or LSFileQuarantineEnabled.
+-->
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleIdentifier</key>
+	<string>io.github.knivesbatz.zipshrink</string>
+	<key>CFBundleName</key>
+	<string>ZipShrink</string>
+	<key>CFBundleDisplayName</key>
+	<string>ZipShrink</string>
+	<key>CFBundleExecutable</key>
+	<string>zipshrink-gui</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
+	<key>CFBundleShortVersionString</key>
+	<string>@VERSION@</string>
+	<key>CFBundleVersion</key>
+	<string>@BUILD@</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>ZipShrink contributors. MIT License.</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.utilities</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>11.0</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSSupportsAutomaticGraphicsSwitching</key>
+	<true/>
+	<!-- A job may be running: macOS must ask the app before ending it. -->
+	<key>NSSupportsSuddenTermination</key>
+	<false/>
+
+	<!-- Finder: select files or folders, right-click > Services >
+	     "Compress with ZipShrink". Handled inside the app by the services
+	     provider method compressFiles:userData:error: (src/macos.rs).
+	     NSRequiredContext makes the entry enabled without a trip to
+	     System Settings. -->
+	<key>NSServices</key>
+	<array>
+		<dict>
+			<key>NSMenuItem</key>
+			<dict>
+				<key>default</key>
+				<string>Compress with ZipShrink</string>
+			</dict>
+			<key>NSMessage</key>
+			<string>compressFiles</string>
+			<key>NSPortName</key>
+			<string>ZipShrink</string>
+			<key>NSSendFileTypes</key>
+			<array>
+				<string>public.item</string>
+			</array>
+			<key>NSRequiredContext</key>
+			<dict/>
+		</dict>
+	</array>
+
+	<!-- "Open With", Dock drops and `open -a ZipShrink` (the odoc Apple
+	     Event). Alternate rank: ZipShrink never becomes the default app
+	     for any kind of file. -->
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>File or folder to compress</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.data</string>
+				<string>public.folder</string>
+			</array>
+		</dict>
+	</array>
+
+	<!-- Shown by macOS the first time ZipShrink reads these places. -->
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>ZipShrink reads the files you choose to compress, writes the archive where you choose, and deletes originals only if you ask it to.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>ZipShrink reads the files you choose to compress, writes the archive where you choose, and deletes originals only if you ask it to.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>ZipShrink reads the files you choose to compress, writes the archive where you choose, and deletes originals only if you ask it to.</string>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>ZipShrink reads the files you choose to compress, writes the archive where you choose, and deletes originals only if you ask it to.</string>
+	<key>NSNetworkVolumesUsageDescription</key>
+	<string>ZipShrink reads the files you choose to compress, writes the archive where you choose, and deletes originals only if you ask it to.</string>
+</dict>
+</plist>
