@@ -8,13 +8,22 @@ body:
         If files were **lost or deleted unexpectedly**, please use the "Possible data loss" template instead.
   - type: input
     id: version
-    attributes: { label: "ZipShrink version", placeholder: "1.0.0 (zipshrink --version, or Settings > Apps)" }
+    attributes: { label: "ZipShrink version", placeholder: "1.1.0 (zipshrink --version; Settings > Apps on Windows; ZipShrink > About ZipShrink on a Mac)" }
     validations: { required: true }
   - type: dropdown
     id: os
     attributes:
       label: Operating system
-      options: [Windows 11, Windows 10, Other]
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS 26 Tahoe
+        - macOS 15 Sequoia
+        - macOS 14 Sonoma
+        - macOS 13 Ventura
+        - macOS 12 Monterey
+        - macOS 11 Big Sur
+        - Other
     validations: { required: true }
   - type: dropdown
     id: ui

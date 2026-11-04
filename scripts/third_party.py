@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Writes THIRD_PARTY_LICENSES.md from `cargo metadata` for the shipped
-Windows programs, and fails if any dependency has a license outside the allow list."""
+Windows and macOS programs (the union of every release target), and fails if any dependency has a license outside the allow list."""
 import json, subprocess, sys
 from collections import defaultdict
 from pathlib import Path
@@ -9,7 +9,9 @@ ALLOWED = {"MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Zlib", "
            "BSL-1.0", "CC0-1.0", "MPL-2.0", "OFL-1.1", "Apache-2.0 WITH LLVM-exception", "0BSD", "Unlicense", "CDLA-Permissive-2.0", "MIT-0", "bzip2-1.0.6"}
 root = Path(__file__).resolve().parent.parent
 crates = {}
-for target in ["x86_64-pc-windows-gnu"]:
+# Every target a release ships: the Windows installer, and both halves of the
+# universal macOS app.
+for target in ["x86_64-pc-windows-gnu", "aarch64-apple-darwin", "x86_64-apple-darwin"]:
     meta = json.loads(subprocess.check_output(["cargo", "metadata", "--format-version", "1", "--filter-platform", target, "--manifest-path", str(root / "Cargo.toml")]))
     nodes = {n["id"]: n for n in meta["resolve"]["nodes"]}
     pkgs = {p["id"]: p for p in meta["packages"]}

@@ -28,18 +28,44 @@ jobs:
       - name: Dependency licenses
         run: python3 scripts/third_party.py && git diff --exit-code THIRD_PARTY_LICENSES.md
 
+  # Code under cfg(target_os = "macos") is only type-checked on a Mac: the
+  # crates that use ring cannot be checked for Apple targets elsewhere.
+  lint-macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets --locked --features "$FEATURES" -- -D warnings
+
   test:
     name: test (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        # macos-14 is Apple silicon. macos-15-intel is GitHub's Intel (x86_64)
+        # Mac: the macos-13 image, the previous Intel one, was retired in
+        # December 2025, and macos-15-intel is the last Intel image. When it
+        # goes too, run the x86_64 tests on Apple silicon under Rosetta
+        # (`cargo test --target x86_64-apple-darwin` on macos-14).
+        os: [windows-latest, ubuntu-latest, macos-14, macos-15-intel]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libxkbcommon-dev
+      - name: sha256sum for the round trip (macOS has shasum)
+        if: runner.os == 'macOS'
+        run: |
+          if ! command -v sha256sum >/dev/null; then
+            mkdir -p "$RUNNER_TEMP/shim"
+            printf '#!/bin/sh\nexec shasum -a 256 "$@"\n' >"$RUNNER_TEMP/shim/sha256sum"
+            chmod +x "$RUNNER_TEMP/shim/sha256sum"
+            echo "$RUNNER_TEMP/shim" >>"$GITHUB_PATH"
+          fi
       - uses: Swatinem/rust-cache@v2
       - name: Unit, integration, fault-injection and crash tests
         shell: bash
@@ -106,6 +132,56 @@ jobs:
           path: |
             dist/
             old/
+
+  macos-app:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - name: Build ZipShrink.app, ZipShrink.dmg and ZipShrink-mac.zip
+        run: packaging/build-macos.sh
+        env:
+          ZIPSHRINK_UPDATE_REPO: ${{ github.repository }}
+      - name: Universal, macOS 11, signed; round trip; launch and file hand-over; disk image and zip
+        run: packaging/macos/check-app.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mac-app
+          path: |
+            dist/ZipShrink.dmg
+            dist/ZipShrink-mac.zip
+          if-no-files-found: error
+      - name: An app that claims to be 0.0.1, for the updater test
+        run: packaging/build-macos.sh 0.0.1
+        env:
+          ZIPSHRINK_UPDATE_FROM: 0.0.1
+          ZIPSHRINK_UPDATE_REPO: ${{ github.repository }}
+          ZIPSHRINK_MAC_TARGETS: aarch64-apple-darwin
+          ZIPSHRINK_DIST: old
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mac-old
+          path: old/ZipShrink-mac.zip
+          if-no-files-found: error
+
+  mac-install:
+    needs: macos-app
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: packaging/macos
+      - uses: actions/download-artifact@v8
+        with: { name: mac-old, path: old }
+      - name: The updater downloads, checks and replaces the app with the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: packaging/macos/check-update.sh old/ZipShrink-mac.zip "${{ github.repository }}"
 
   windows-install:
     needs: installer
