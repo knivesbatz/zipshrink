@@ -2,65 +2,67 @@
 
 ## Requirements
 
-* MinGW-w64's 32-bit C compiler and binutils (`i686-w64-mingw32-gcc`,
-  `windres`), GNU make, Python 3.
-  * Debian/Ubuntu: `sudo apt install gcc-mingw-w64-i686 binutils-mingw-w64-i686 make python3`
-  * Windows: MSYS2 with `mingw-w64-i686-gcc` and `make`; run
-    `make CROSS=` from a MINGW32 shell, or keep the default `CROSS` prefix
-    if your toolchain uses it.
-* For the test suite on Linux: 32-bit Wine (`sudo dpkg --add-architecture i386 && sudo apt install wine32:i386 wine`).
-* For the installer: NSIS 3 (`makensis`).
-
-No other libraries are needed: the programs use only Windows itself and the
-vendored miniz.
+* Rust 1.89 or newer (`rustup`).
+* For the installer: the `x86_64-pc-windows-gnu` target, MinGW-w64 and
+  NSIS 3. On Debian/Ubuntu:
+  `sudo apt install mingw-w64 nsis && rustup target add x86_64-pc-windows-gnu`.
+* For building and testing on Linux (development only; ZipShrink ships for
+  Windows): `libxkbcommon-dev libgtk-3-dev` for the desktop app.
 
 ## Build and test
 
 ```
-make                  # build/zipshrink.exe, build/zipshrink-gui.exe
-make test             # build/zs-tests.exe, build/zipshrink-fp.exe, then tests/run.py
-make check-imports    # every import must exist on Windows 95
+cargo build --release              # target/release/zipshrink(.exe) and zipshrink-gui(.exe)
+cargo test --workspace --features zipshrink-core/failpoints,zipshrink-cli/failpoints
+cargo clippy --workspace --all-targets --features zipshrink-core/failpoints,zipshrink-cli/failpoints -- -D warnings
+cargo fmt --all --check
 ```
 
-`make test` runs the programs directly on Windows and through `wine`
-elsewhere. To run the suite with Wine pretending to be Windows 95 (ANSI file
-API, cached read-back, the 9x delete path):
+The `failpoints` feature adds the fault-injection and crash tests (it makes
+the programs obey `ZIPSHRINK_FAILPOINT`). It must never be enabled for
+release builds.
+
+The Windows tests can also run on Linux under 64-bit Wine:
 
 ```
-export WINEPREFIX=$HOME/.wine-win95
-wineboot -i
-wine reg add 'HKCU\Software\Wine' /v Version /d win95 /f
-python3 tests/run.py --build build --win95
+LANG=C.UTF-8 CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUNNER=wine \
+  cargo test -p zipshrink-core -p zipshrink-cli -p zipshrink-update --target x86_64-pc-windows-gnu \
+  --features zipshrink-core/failpoints,zipshrink-cli/failpoints
 ```
 
-`tests/run.py -k NAME` runs the tests whose names contain NAME; `--keep`
-keeps the folders of failed tests; `--slow` adds a test with a file over
-4 GiB.
-
-`zipshrink-fp.exe` and `zs-tests.exe` are built with `-DZS_FAILPOINTS` (fault
-injection through the `ZIPSHRINK_FAILPOINT` environment variable). Release
-builds never contain it.
-
-## Packages
+## The installer
 
 ```
-packaging/build-windows.sh    # writes dist/
+packaging/build-windows.sh            # writes dist/ZipShrink-setup.exe
 ```
 
-Produces `ZipShrink-setup.exe`, an ANSI NSIS installer for Windows 95–11.
-It is the only file a release needs; the release workflow uses exactly this
-script.
+Cross-builds both programs with `cargo build --release --target
+x86_64-pc-windows-gnu` and packs them with `packaging/windows/zipshrink.nsi`.
+`ZipShrink-setup.exe` is the only file a release needs; the release workflow
+uses exactly this script. Build-time settings:
 
-## Regenerating the icon
+* `ZIPSHRINK_UPDATE_REPO=owner/repo`: the repository the updater checks
+  (default `knivesbatz/zipshrink`).
+* `ZIPSHRINK_UPDATE_FROM=0.0.1`: makes a build compare updates with that
+  version instead of its own; CI uses it to test a real update.
+
+## Regenerating files
 
 ```
-python3 scripts/make_icon.py    # assets/zipshrink.ico (16-colour and 32-bit BMP entries)
+python3 scripts/make_icon.py      # assets/zipshrink.ico
+python3 scripts/third_party.py    # THIRD_PARTY_LICENSES.md and the license allow-list check
 ```
 
 ## Releasing
 
-1. Change the version in `src/version.h`.
-2. Merge to `main`, then run the **Release** workflow with the tag
-   `vX.Y.Z` (or push the tag). It builds the installer, adds `SHA256SUMS`
-   (for the updater of 0.2 and 0.3), and publishes a GitHub release. Installed
-   copies find it within a week and update themselves.
+1. Change `version` in the workspace `Cargo.toml` and run `cargo update -w`
+   so `Cargo.lock` matches.
+2. Merge to `main`, then run the **Release** workflow with the tag `vX.Y.Z`
+   (or push the tag). It checks the tag matches the version, builds the
+   installer, adds `SHA256SUMS` (for the updater of 0.2 and 0.3) and publishes
+   the GitHub release. A draft left by a failed run, or a release made by
+   hand, is completed and published instead.
+3. Once the new release is published and its files are downloaded back and
+   checked, the workflow **deletes every other release** (drafts included),
+   so the releases page offers one download. Git tags are kept. Installed
+   copies find the new release within a week and update themselves.
