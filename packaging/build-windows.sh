@@ -15,14 +15,17 @@ if [ "$VERSION" != "$CRATE_VERSION" ]; then
   exit 1
 fi
 TARGET=x86_64-pc-windows-gnu
-TARGET_DIR="${CARGO_TARGET_DIR:-$(pwd)/target}"
+# Absolute, as cargo resolves a relative CARGO_TARGET_DIR (against this
+# folder): build.rs runs elsewhere and is handed the payload folder in it.
+TARGET_DIR="${CARGO_TARGET_DIR:-target}"
+mkdir -p "$TARGET_DIR"
+TARGET_DIR="$(cd "$TARGET_DIR" && pwd)"
 BIN="$TARGET_DIR/$TARGET/release"
 
 # 1. The programs.
 cargo build --release --locked --target "$TARGET" -p zipshrink-cli -p zipshrink-gui
 
 # 2. Exactly the files to install; setup embeds this folder.
-mkdir -p "$TARGET_DIR"
 PAYLOAD="$(mktemp -d "$TARGET_DIR/windows-payload.XXXXXX")"
 trap 'rm -rf "$PAYLOAD"' EXIT
 cp "$BIN/zipshrink-gui.exe" "$BIN/zipshrink.exe" "$PAYLOAD/"

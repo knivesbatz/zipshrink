@@ -51,6 +51,8 @@ pub struct Compress {
     check_dirty_at: Option<Instant>,
     pub flow: Flow,
     finished: bool,
+    /// The outputs of the running (or last) job.
+    job_outputs: Vec<PathBuf>,
 }
 
 impl Default for Compress {
@@ -75,6 +77,7 @@ impl Default for Compress {
             check_dirty_at: None,
             flow: Flow::Setup,
             finished: false,
+            job_outputs: Vec::new(),
         }
     }
 }
@@ -118,9 +121,10 @@ impl Compress {
         matches!(&self.flow, Flow::Run(rv) if rv.close_after)
     }
 
-    /// True once after a job ends (so the Resume list can refresh).
-    pub fn take_finished_outputs(&mut self) -> Option<()> {
-        std::mem::take(&mut self.finished).then_some(())
+    /// The job's outputs, once after it ends (so the Resume list can
+    /// refresh).
+    pub fn take_finished_outputs(&mut self) -> Option<Vec<PathBuf>> {
+        std::mem::take(&mut self.finished).then(|| std::mem::take(&mut self.job_outputs))
     }
 
     pub fn add_sources(&mut self, paths: Vec<PathBuf>) {
@@ -272,7 +276,8 @@ impl Compress {
         let delete = req.options.delete_originals;
         let outputs: Vec<PathBuf> =
             if c.parts.is_empty() { vec![req.output.clone()] } else { c.parts.iter().map(|p| p.output.clone()).collect() };
-        super::jobs::remember(outputs);
+        super::jobs::remember(outputs.clone());
+        self.job_outputs = outputs;
         self.flow =
             Flow::Run(Box::new(RunView::new(worker::run(ctx.clone(), Start::Create { req, scan: c.scan, parts: c.parts }), delete)));
         self.check_key.clear();
@@ -280,7 +285,8 @@ impl Compress {
 
     pub fn resume(&mut self, ctx: &egui::Context, path: PathBuf, no_delete: bool) {
         let targets = zipshrink_core::split::resume_targets(&path);
-        super::jobs::remember(targets);
+        super::jobs::remember(targets.clone());
+        self.job_outputs = targets;
         self.flow = Flow::Run(Box::new(RunView::new(worker::run(ctx.clone(), Start::Resume { path, no_delete }), !no_delete)));
     }
 

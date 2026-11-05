@@ -166,20 +166,43 @@ if grep -q "Compress with ZipShrink" <<<"$services"; then
 else
   echo "::warning title=Mac app check::'Compress with ZipShrink' is not in the Services list (pbs -dump)"
 fi
-# 5. Quit through the quit Apple Event (Dock > Quit); a build machine may
-#    not allow sending it, and then the smoke timer closes the app.
+# 5. Quit through the quit Apple Event (Dock > Quit, log out) while the app
+#    is hidden (⌘H): eframe then draws no frames, and the app must still
+#    quit at once. Hiding through NSRunningApplication needs no
+#    accessibility permission. A build machine may not allow sending the
+#    Apple Event, and then the smoke timer closes the app.
+hidden=0
+hide_js="ObjC.import('AppKit');
+var a = \$.NSRunningApplication.runningApplicationsWithBundleIdentifier('$ID');
+if (a.count > 0) { a.objectAtIndex(0).hide; delay(2); a.objectAtIndex(0).isHidden } else { false }"
+if [ "$(perl -e 'alarm shift; exec @ARGV' 20 osascript -l JavaScript -e "$hide_js" 2>&1)" = true ]; then
+  hidden=1
+  echo "hid the app"
+else
+  echo "::warning title=Mac app check::could not hide the app; quitting it while shown"
+fi
+sent=0
 if perl -e 'alarm shift; exec @ARGV' 20 osascript -e "tell application id \"$ID\" to quit"; then
+  sent=1
   echo "sent quit"
 else
   echo "::warning title=Mac app check::could not send the quit Apple Event; waiting for the smoke timer"
 fi
-for ((i = 0; i < 360; i++)); do
+# A sent quit must end the app well before its smoke timer would.
+wait_s=180
+[ "$sent" = 1 ] && wait_s=30
+for ((i = 0; i < wait_s * 2; i++)); do
   running || break
   sleep 0.5
 done
 if running; then
   cat "$LOG"
+  if [ "$sent" = 1 ] && [ "$hidden" = 1 ]; then fail "the hidden app did not quit on the quit Apple Event"; fi
   fail "the app did not close"
+fi
+if [ "$sent" = 1 ] && ! has_line quit; then
+  cat "$LOG"
+  fail "the app closed, but not through the quit Apple Event"
 fi
 echo "--- app log"
 cat "$LOG"

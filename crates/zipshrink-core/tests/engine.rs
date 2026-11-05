@@ -518,5 +518,10 @@ mod macos {
         assert!(err.to_string().contains("separate drive"), "{err}");
         let t = tempfile::tempdir().unwrap();
         assert!(scan::canonical_roots(&[t.path().to_path_buf()]).is_ok());
+        // Firmlinked folders are on the Data volume, under the System
+        // volume's root, but they are not mount points.
+        for p in ["/Applications", "/Users"] {
+            assert!(scan::canonical_roots(&[PathBuf::from(p)]).is_ok(), "{p}");
+        }
     }
 }

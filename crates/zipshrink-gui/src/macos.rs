@@ -3,7 +3,8 @@
 //! Services entry, Quit from the Dock or at logout (the `quit` Apple Event,
 //! routed through the window's close path so a running job asks first), and
 //! the menu bar. AppKit calls arrive on the main thread outside egui's frame;
-//! they are queued here and the app takes them at the start of each frame.
+//! they are queued here and the app takes them in `App::logic`, which runs
+//! before each frame and also while the window is minimized or hidden.
 //!
 //! Files that arrive through these routes count as the user's own choice,
 //! so macOS asks no extra privacy question before ZipShrink reads them.
@@ -303,6 +304,17 @@ pub fn install_menu() {
     app.setHelpMenu(Some(&m));
 
     app.setMainMenu(Some(&bar));
+}
+
+/// Shows the app again after Hide (⌘H) and brings it to the front, so a
+/// question or newly handed-over files are seen. The window itself is
+/// brought back from the Dock with egui's viewport commands.
+pub fn reveal() {
+    let Some(mtm) = MainThreadMarker::new() else { return };
+    let app = NSApplication::sharedApplication(mtm);
+    app.unhide(None);
+    #[allow(deprecated)] // activate() needs macOS 14
+    app.activateIgnoringOtherApps(true);
 }
 
 /// The "Reduce motion" accessibility setting.

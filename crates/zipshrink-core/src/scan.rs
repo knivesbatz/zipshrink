@@ -65,8 +65,8 @@ pub fn canonical_roots(sources: &[PathBuf]) -> Result<Vec<PathBuf>> {
         if c.file_name().is_none() {
             return Err(Error::Invalid(format!("{} is the root of a drive; select folders inside it instead", c.display())));
         }
-        // On macOS every drive is a folder under /Volumes: a folder on a
-        // different volume from its parent is the top of a drive.
+        // On macOS every drive is a folder under /Volumes: a folder where
+        // a volume is mounted is the top of a drive.
         #[cfg(target_os = "macos")]
         if kind == Kind::Dir && platform::is_mount_point(&c) {
             return Err(Error::Invalid(format!(

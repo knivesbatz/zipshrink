@@ -360,22 +360,27 @@ mod sys {
         (!name.is_empty()).then(|| super::fs_display_name(name))
     }
 
-    /// Whether `path` (canonical) is where a volume is mounted. APFS
-    /// volume groups firmlink the Data volume into the System volume, so a
-    /// device number comparison with the parent is not enough: `statfs`
-    /// names the mount point of the volume holding the path.
+    /// Whether `path` (canonical) is where a volume is mounted: `statfs`
+    /// names the mount point of the volume holding the path. Comparing
+    /// device numbers with the parent would also flag the firmlinked
+    /// top-level folders of an APFS volume group (/Applications, /Users,
+    /// /Library, /usr/local...), which sit on the Data volume under the
+    /// System volume's `/`; they are ordinary folders and are accepted.
     pub fn is_mount_point(path: &Path) -> bool {
-        use std::os::unix::fs::MetadataExt;
-        if let Ok(s) = statfs(path) {
-            let on = unsafe { CStr::from_ptr(s.f_mntonname.as_ptr()) };
-            if on.to_bytes() == path.as_os_str().as_encoded_bytes() {
-                return true;
+        match statfs(path) {
+            Ok(s) => {
+                let on = unsafe { CStr::from_ptr(s.f_mntonname.as_ptr()) };
+                on.to_bytes() == path.as_os_str().as_encoded_bytes()
             }
-        }
-        let Some(parent) = path.parent() else { return true };
-        match (fs::symlink_metadata(path), fs::metadata(parent)) {
-            (Ok(a), Ok(b)) => a.dev() != b.dev(),
-            _ => false,
+            // Unknown: only the device number comparison is left.
+            Err(_) => {
+                use std::os::unix::fs::MetadataExt;
+                let Some(parent) = path.parent() else { return true };
+                match (fs::symlink_metadata(path), fs::metadata(parent)) {
+                    (Ok(a), Ok(b)) => a.dev() != b.dev(),
+                    _ => false,
+                }
+            }
         }
     }
 

@@ -125,7 +125,7 @@ opens two more items with `open -a`, and expects every path in the log.
 | `lint` | Linux | `cargo fmt`, Clippy, `THIRD_PARTY_LICENSES.md` up to date |
 | `lint-macos` | macOS (Apple silicon) | Clippy over the Mac-only code |
 | `test` | Windows, Linux, macOS 14 (Apple silicon), macOS 15 (Intel) | the whole test suite, then a round trip with deletion checked by Python's `zipfile` |
-| `installer`, `windows-install` | Linux, then Windows | builds the installer; installs, upgrades, restarts, uninstalls; a real update |
+| `installer`, `windows-install` | Linux, then Windows | builds the installer; installs, upgrades (also over the 1.0 NSIS and 0.3 MSI installs, see CI fixtures), restarts, uninstalls; a real update |
 | `macos-app`, `mac-install` | macOS (Apple silicon) | builds and checks the Mac app (above); a real update of an app in `/Applications` |
 
 The Intel Mac runner is `macos-15-intel`, GitHub's last Intel image. When it
@@ -159,5 +159,29 @@ it after changing dependencies.
 3. Once the new release is published, holds exactly those four files, and
    each has been downloaded back and matched against the build and GitHub's
    recorded SHA-256, the workflow **deletes every other release** (drafts included),
-   so the releases page offers one download. Git tags are kept. Installed
-   copies find the new release within a week and update themselves.
+   so the releases page offers one download. Git tags are kept, and so is
+   the `ci-fixtures` prerelease (below). Installed copies find the new
+   release within a week and update themselves.
+
+### CI fixtures
+
+`windows-install` checks that the new installer upgrades copies put there
+by older installers. Those installers are gone once their release is
+deleted, so they are kept as assets of a **prerelease** tagged `ci-fixtures`
+(a prerelease is never what `releases/latest`, and so the updater, sees):
+
+| Asset | What it is | Checked by |
+|---|---|---|
+| `ZipShrink-setup-1.0.0.exe` | the 1.0.0 NSIS installer (`ZipShrink-setup.exe` of release v1.0.0) | upgrade from NSIS, run as the 1.0 updater runs it (`/S /RESTART`) |
+| `ZipShrink-0.3.0.msi` | the 0.3.0 per-machine MSI (`ZipShrink.msi` of release v0.3.0, or built from tag v0.3.0) | removal of an MSI copy |
+
+Without an asset, its step falls back to the old release while that still
+exists, and otherwise only warns that the path is not tested. Make the
+prerelease once, before the release that deletes v1.0.0:
+
+```
+gh release download v1.0.0 --pattern ZipShrink-setup.exe --dir fx
+mv fx/ZipShrink-setup.exe fx/ZipShrink-setup-1.0.0.exe
+gh release create ci-fixtures --prerelease --title "CI fixtures (not for download)" \
+  --notes "Old installers for CI's upgrade tests." fx/ZipShrink-setup-1.0.0.exe
+```

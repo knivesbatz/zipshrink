@@ -189,20 +189,25 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with: { name: installer }
-      - name: Setup installs, and replaces a copy installed from the 0.3 MSI
+      # Old installers are kept as fixtures on the `ci-fixtures` prerelease,
+      # which the release workflow does not delete (docs/BUILDING.md).
+      - name: Setup installs, and replaces a copy installed from the 0.3 MSI (when the fixture is there)
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $msi = "${env:ProgramFiles(x86)}\ZipShrink\zipshrink.exe"
-          gh release download v0.3.0 --repo ${{ github.repository }} --pattern ZipShrink.msi --dir msi03
-          $haveMsi = $LASTEXITCODE -eq 0
+          $haveMsi = $false
+          foreach ($src in @('ci-fixtures', 'ZipShrink-0.3.0.msi'), @('v0.3.0', 'ZipShrink.msi')) {
+            gh release download $src[0] --repo ${{ github.repository }} --pattern $src[1] --dir msi03
+            if ($LASTEXITCODE -eq 0) { $haveMsi = $true; $msiFile = "msi03\$($src[1])"; break }
+          }
           if ($haveMsi) {
-            $p = Start-Process msiexec -ArgumentList '/i','msi03\ZipShrink.msi','/qn' -Wait -PassThru
+            $p = Start-Process msiexec -ArgumentList '/i',$msiFile,'/qn' -Wait -PassThru
             if ($p.ExitCode -ne 0) { throw "old msi failed: $($p.ExitCode)" }
             if (-not (Test-Path $msi)) { throw "old msi did not install" }
           } else {
-            Write-Output "::warning::the v0.3.0 release is gone; MSI replacement not tested"
+            Write-Output "::warning::no ZipShrink 0.3 MSI (ci-fixtures release: ZipShrink-0.3.0.msi); removing an MSI copy is NOT tested"
           }
           $p = Start-Process dist\ZipShrink-setup.exe -ArgumentList '/S' -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "setup failed: $($p.ExitCode)" }
@@ -250,12 +255,92 @@ jobs:
         run: |
           $dir = "$env:LOCALAPPDATA\Programs\ZipShrink"
           $p = Start-Process "$dir\Uninstall.exe" -ArgumentList '/S',"_?=$dir" -Wait -PassThru
-          Start-Sleep -Seconds 3
-          if (Test-Path "$dir\zipshrink.exe") { throw "uninstall left files" }
+          if ($p.ExitCode -ne 0) { throw "uninstall failed: $($p.ExitCode)" }
+          # The uninstaller parks itself in %TEMP% and a hidden cmd deletes
+          # it (and, across drives, the folder) once it has exited.
+          $parked = Join-Path ([IO.Path]::GetTempPath()) "ZipShrink-uninstall-$($p.Id).exe"
+          for ($i = 0; $i -lt 30 -and ((Test-Path $dir) -or (Test-Path $parked)); $i++) { Start-Sleep -Seconds 1 }
+          if (Test-Path $dir) { throw "uninstall left the folder: $(Get-ChildItem $dir -Recurse -Name)" }
+          if (Test-Path $parked) { throw "the uninstaller was left in $parked" }
           if (Test-Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ZipShrink') { throw "uninstall left the Add/Remove Programs entry" }
           foreach ($k in 'HKCU:\Software\Classes\*\shell\ZipShrink', 'HKCU:\Software\Classes\Directory\shell\ZipShrink') {
             if (Test-Path -LiteralPath $k) { throw "uninstall left the right-click menu: $k" }
           }
+          foreach ($l in ([Environment]::GetFolderPath('Programs') + '\ZipShrink.lnk'), ([Environment]::GetFolderPath('Desktop') + '\ZipShrink.lnk')) {
+            if (Test-Path $l) { throw "uninstall left the shortcut $l" }
+          }
+          $path = (Get-ItemProperty HKCU:\Environment).Path
+          if ($path -and ($path.Split(';') -contains $dir)) { throw "uninstall left $dir in PATH" }
+      - name: Setup upgrades a copy installed by the 1.0 NSIS installer, as the 1.0 updater runs it
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The 1.0 installer comes from the ci-fixtures release, or from the
+          # v1.0.0 release while that still exists.
+          $old = $null
+          foreach ($src in @('ci-fixtures', 'ZipShrink-setup-1.0.0.exe'), @('v1.0.0', 'ZipShrink-setup.exe')) {
+            gh release download $src[0] --repo ${{ github.repository }} --pattern $src[1] --dir nsis10
+            if ($LASTEXITCODE -eq 0) { $old = "nsis10\$($src[1])"; break }
+          }
+          if (-not $old) {
+            Write-Output "::warning::no ZipShrink 1.0.0 installer (ci-fixtures release: ZipShrink-setup-1.0.0.exe); the upgrade from the NSIS installer is NOT tested"
+            exit 0
+          }
+          $dir = "$env:LOCALAPPDATA\Programs\ZipShrink"
+          $uninstKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ZipShrink'
+          $p = Start-Process $old -ArgumentList '/S' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "the 1.0 installer failed: $($p.ExitCode)" }
+          $v = (Get-ItemProperty $uninstKey).DisplayVersion
+          if ($v -ne '1.0.0') { throw "the 1.0 installer recorded version '$v'" }
+          # Leave one optional part out, which the upgrade must not put back.
+          $desk = [Environment]::GetFolderPath('Desktop') + '\ZipShrink.lnk'
+          $start = [Environment]::GetFolderPath('Programs') + '\ZipShrink.lnk'
+          if (-not (Test-Path $desk) -or -not (Test-Path $start)) { throw "the 1.0 installer made no shortcuts" }
+          Remove-Item $desk
+          $setup = Start-Process dist\ZipShrink-setup.exe -ArgumentList '/S','/RESTART' -PassThru
+          if (-not $setup.WaitForExit(120000)) { throw "the upgrade did not finish" }
+          if ($setup.ExitCode -ne 0) { throw "the upgrade failed: $($setup.ExitCode)" }
+          Start-Sleep -Seconds 3
+          $gui = Get-Process zipshrink-gui -ErrorAction SilentlyContinue
+          if (-not $gui) { throw "/RESTART did not start ZipShrink" }
+          $gui | Stop-Process
+          $want = (& "$dir\zipshrink.exe" --version).Split(' ')[-1]
+          if ($want -eq '1.0.0') { throw "the program files were not replaced" }
+          $v = (Get-ItemProperty $uninstKey).DisplayVersion
+          if ($v -ne $want) { throw "Add/Remove Programs shows $v, expected $want" }
+          $a = (Get-FileHash "$dir\Uninstall.exe").Hash
+          $b = (Get-FileHash dist\ZipShrink-setup.exe).Hash
+          if ($a -ne $b) { throw "Uninstall.exe is not the new program" }
+          if (Test-Path $desk) { throw "the upgrade put back the desktop shortcut" }
+          if (-not (Test-Path $start)) { throw "the upgrade lost the Start menu shortcut" }
+          foreach ($k in 'HKCU:\Software\Classes\*\shell\ZipShrink\command', 'HKCU:\Software\Classes\Directory\shell\ZipShrink\command') {
+            $cmd = (Get-Item -LiteralPath $k).GetValue('')
+            if ($cmd -ne "`"$dir\zipshrink-gui.exe`" `"%1`"") { throw "right-click menu ${k}: '$cmd'" }
+          }
+          $path = (Get-ItemProperty HKCU:\Environment).Path
+          if (-not ($path.Split(';') -contains $dir)) { throw "the upgrade lost the PATH entry: $path" }
+      - name: Uninstall the upgraded copy
+        shell: pwsh
+        run: |
+          $dir = "$env:LOCALAPPDATA\Programs\ZipShrink"
+          $p = Start-Process "$dir\Uninstall.exe" -ArgumentList '/S',"_?=$dir" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "uninstall failed: $($p.ExitCode)" }
+          # The uninstaller parks itself in %TEMP% and a hidden cmd deletes
+          # it (and, across drives, the folder) once it has exited.
+          $parked = Join-Path ([IO.Path]::GetTempPath()) "ZipShrink-uninstall-$($p.Id).exe"
+          for ($i = 0; $i -lt 30 -and ((Test-Path $dir) -or (Test-Path $parked)); $i++) { Start-Sleep -Seconds 1 }
+          if (Test-Path $dir) { throw "uninstall left the folder: $(Get-ChildItem $dir -Recurse -Name)" }
+          if (Test-Path $parked) { throw "the uninstaller was left in $parked" }
+          if (Test-Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ZipShrink') { throw "uninstall left the Add/Remove Programs entry" }
+          foreach ($k in 'HKCU:\Software\Classes\*\shell\ZipShrink', 'HKCU:\Software\Classes\Directory\shell\ZipShrink') {
+            if (Test-Path -LiteralPath $k) { throw "uninstall left the right-click menu: $k" }
+          }
+          foreach ($l in ([Environment]::GetFolderPath('Programs') + '\ZipShrink.lnk'), ([Environment]::GetFolderPath('Desktop') + '\ZipShrink.lnk')) {
+            if (Test-Path $l) { throw "uninstall left the shortcut $l" }
+          }
+          $path = (Get-ItemProperty HKCU:\Environment).Path
+          if ($path -and ($path.Split(';') -contains $dir)) { throw "uninstall left $dir in PATH" }
       - name: The updater downloads, checks and installs the latest release
         shell: pwsh
         env:
