@@ -42,7 +42,7 @@ pub(crate) fn bundle_of(exe: &Path) -> Option<PathBuf> {
 
 /// The bundle this process runs from (symbolic links, such as a
 /// `/usr/local/bin/zipshrink` link to the bundled tool, resolved).
-pub(crate) fn current_bundle() -> Option<PathBuf> {
+pub(crate) fn bundle_root() -> Option<PathBuf> {
     bundle_of(&std::env::current_exe().ok()?.canonicalize().ok()?)
 }
 
@@ -88,7 +88,7 @@ pub(crate) fn blocker(bundle: &Path) -> Option<Blocker> {
 }
 
 pub(crate) fn method() -> Method {
-    match current_bundle() {
+    match bundle_root() {
         // A development build outside an app bundle.
         None => Method::ReleasePage,
         Some(bundle) => match blocker(&bundle) {
@@ -101,7 +101,7 @@ pub(crate) fn method() -> Method {
 /// The running bundle, if it can replace itself.
 fn installable_bundle() -> Result<PathBuf, UpdateError> {
     match method() {
-        Method::ReplaceApp => current_bundle().ok_or_else(|| UpdateError::Install("ZipShrink.app was not found".into())),
+        Method::ReplaceApp => bundle_root().ok_or_else(|| UpdateError::Install("ZipShrink.app was not found".into())),
         m => Err(UpdateError::Install(m.explain())),
     }
 }
@@ -335,30 +335,63 @@ pub(crate) fn spawn_finisher(pid: u32, old: &Path, stage: &Path, app: &Path, res
         .map(|_| ())
 }
 
-/// [`crate::prepare_update`]: stages the downloaded zip and deletes it.
-pub(crate) fn prepare(zip: &Path) -> Result<PathBuf, UpdateError> {
-    let r = installable_bundle().and_then(|bundle| stage(zip, &bundle, caches_dir().as_deref()));
+/// Stages the downloaded `zip` for replacing `bundle`, then deletes the zip
+/// (also when staging fails: a download that failed a check is not kept).
+fn stage_and_delete(zip: &Path, bundle: &Path, caches: Option<&Path>) -> Result<PathBuf, UpdateError> {
+    let r = stage(zip, bundle, caches);
     let _ = fs::remove_file(zip);
     r
+}
+
+/// [`crate::prepare_update`]: stages the downloaded zip and deletes it.
+pub(crate) fn prepare(zip: &Path) -> Result<PathBuf, UpdateError> {
+    let bundle = installable_bundle()?;
+    stage_and_delete(zip, &bundle, caches_dir().as_deref())
 }
 
 /// [`crate::launch_installer`]: stages `path` unless it is already a staged
 /// app, swaps it in and starts the clean-up.
 pub(crate) fn install(path: &Path, restart: bool) -> io::Result<()> {
-    let to_io = |e: UpdateError| match e {
+    let bundle = installable_bundle().map_err(to_io)?;
+    install_to(path, &bundle, caches_dir().as_deref(), restart)
+}
+
+fn to_io(e: UpdateError) -> io::Error {
+    match e {
         UpdateError::Io(e) => e,
         e => io::Error::other(e.to_string()),
-    };
-    let bundle = installable_bundle().map_err(to_io)?;
-    let staged = if path.extension() == Some(OsStr::new("app")) { path.to_path_buf() } else { prepare(path).map_err(to_io)? };
-    let stage_dir = staged.parent().map(Path::to_path_buf).ok_or_else(|| io::Error::other("the update is not staged"))?;
-    if !staged.join("Contents/Info.plist").is_file() {
-        return Err(io::Error::other(format!("the staged update at {} is gone", staged.display())));
     }
-    let old = swap(&staged, &bundle)?;
+}
+
+/// Puts the update at `path` (a downloaded zip, or an app [`stage`]d
+/// earlier) in place of `bundle`, then starts the clean-up that waits for
+/// this process.
+fn install_to(path: &Path, bundle: &Path, caches: Option<&Path>, restart: bool) -> io::Result<()> {
+    let staged = if path.extension() == Some(OsStr::new("app")) {
+        if !path.join("Contents/Info.plist").is_file() {
+            return Err(io::Error::other(format!("the staged update at {} is gone", path.display())));
+        }
+        // Staged a while ago: `zipshrink update` in a terminal may have
+        // installed this version (or a newer one) since.
+        if let (Some(new), Some(cur)) = (plist(path, "CFBundleShortVersionString"), plist(bundle, "CFBundleShortVersionString")) {
+            if !is_newer(&new, &cur) {
+                return Err(io::Error::other(format!("ZipShrink {cur} is already installed; quit ZipShrink and open it again")));
+            }
+        }
+        path.to_path_buf()
+    } else {
+        stage_and_delete(path, bundle, caches).map_err(to_io)?
+    };
+    // The clean-up deletes this folder, so it must be one of ours.
+    let stage_dir = staged
+        .parent()
+        .filter(|d| d.file_name().and_then(OsStr::to_str).and_then(stage_pid).is_some())
+        .map(Path::to_path_buf)
+        .ok_or_else(|| io::Error::other(format!("{} is not a staged update", staged.display())))?;
+    let old = swap(&staged, bundle)?;
     // The update is in place either way; without the clean-up only the old
     // copy stays in the staging folder until the next start.
-    if let Err(e) = spawn_finisher(std::process::id(), &old, &stage_dir, &bundle, restart) {
+    if let Err(e) = spawn_finisher(std::process::id(), &old, &stage_dir, bundle, restart) {
         eprintln!("ZipShrink: could not start the clean-up after the update: {e}");
     }
     Ok(())
@@ -375,23 +408,11 @@ fn alive(pid: u32) -> bool {
     r == 0 || io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
-#[cfg(target_os = "macos")]
-fn quarantined(path: &Path) -> bool {
-    let Ok(p) = cstr(path) else { return false };
-    // SAFETY: valid NUL-terminated strings; a null buffer of size 0 only asks for the size.
-    unsafe { libc::getxattr(p.as_ptr(), c"com.apple.quarantine".as_ptr(), std::ptr::null_mut(), 0, 0, 0) >= 0 }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn quarantined(_: &Path) -> bool {
-    false
-}
-
 /// [`crate::mac_cleanup_leftovers`].
 pub(crate) fn cleanup_leftovers() {
     let me = std::process::id();
-    let bundle = current_bundle();
-    let dirs = caches_dir().into_iter().chain(bundle.as_ref().and_then(|b| b.parent()).map(Path::to_path_buf));
+    let beside = bundle_root().and_then(|b| b.parent().map(Path::to_path_buf));
+    let dirs = caches_dir().into_iter().chain(beside);
     for dir in dirs {
         let Ok(entries) = fs::read_dir(&dir) else { continue };
         for e in entries.filter_map(Result::ok) {
@@ -403,20 +424,6 @@ pub(crate) fn cleanup_leftovers() {
                 continue;
             }
             let _ = fs::remove_dir_all(e.path());
-        }
-    }
-    // Copies dragged out of the disk image keep the quarantine flag on every
-    // file; the bundled command-line tool would then be stopped by Gatekeeper
-    // on its own, even after the app was allowed.
-    if let Some(b) = bundle {
-        if quarantined(&b) && blocker(&b).is_none() {
-            let _ = Command::new("/usr/bin/xattr")
-                .args(["-dr", "com.apple.quarantine"])
-                .arg(&b)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
         }
     }
 }
@@ -522,6 +529,21 @@ mod tests {
     }
 
     #[test]
+    fn only_staged_apps_are_installed() {
+        let t = tempfile::tempdir().unwrap();
+        let installed = bundle_dir(t.path(), "Applications/ZipShrink.app", "old");
+        // The clean-up would delete the folder an app is in: never one of the user's.
+        let other = bundle_dir(t.path(), "Downloads/ZipShrink.app", "new");
+        let e = install_to(&other, &installed, None, false).unwrap_err().to_string();
+        assert!(e.contains("not a staged update"), "{e}");
+        let gone = t.path().join(".ZipShrink-update-1/ZipShrink.app");
+        let e = install_to(&gone, &installed, None, false).unwrap_err().to_string();
+        assert!(e.contains("is gone"), "{e}");
+        assert_eq!(fs::read_to_string(installed.join("Contents/Info.plist")).unwrap(), "old");
+        assert!(other.exists());
+    }
+
+    #[test]
     fn finisher_waits_for_the_process_then_cleans_up() {
         let t = tempfile::tempdir().unwrap();
         let app = bundle_dir(t.path(), "ZipShrink.app", "new");
@@ -558,6 +580,12 @@ mod tests {
     #[cfg(target_os = "macos")]
     mod macos {
         use super::*;
+
+        fn quarantined(path: &Path) -> bool {
+            let p = cstr(path).unwrap();
+            // SAFETY: valid NUL-terminated strings; a null buffer of size 0 only asks for the size.
+            unsafe { libc::getxattr(p.as_ptr(), c"com.apple.quarantine".as_ptr(), std::ptr::null_mut(), 0, 0, 0) >= 0 }
+        }
 
         fn sh(cmd: &mut Command) {
             let out = cmd.output().unwrap();
@@ -652,6 +680,27 @@ mod tests {
             assert_eq!(version(&installed).as_deref(), Some("9.9.9"));
             assert_eq!(version(&old).as_deref(), Some("1.0.0"));
             assert!(old.starts_with(staged.parent().unwrap()));
+        }
+
+        #[test]
+        fn install_from_the_zip_then_refuse_a_stale_stage() {
+            let t = tempfile::tempdir().unwrap();
+            let t = t.path().canonicalize().unwrap();
+            let (installed, z, caches) = setup(&t);
+            // Staged by the app, say, before `zipshrink update` installed it.
+            let early = stage(&z, &installed, Some(&t.join("Caches2"))).unwrap();
+            install_to(&z, &installed, Some(&caches), false).unwrap();
+            assert!(!z.exists(), "the zip was kept");
+            assert_eq!(version(&installed).as_deref(), Some("9.9.9"));
+            sh(Command::new("codesign").args(["--verify", "--deep", "--strict"]).arg(&installed));
+            let e = install_to(&early, &installed, Some(&caches), false).unwrap_err().to_string();
+            assert!(e.contains("already installed"), "{e}");
+            assert_eq!(version(&early).as_deref(), Some("9.9.9"));
+            // Only staged apps are taken: the clean-up deletes their folder.
+            let elsewhere = fake_app(&t.join("elsewhere"), "9.9.10", "");
+            let e = install_to(&elsewhere, &installed, Some(&caches), false).unwrap_err().to_string();
+            assert!(e.contains("not a staged update"), "{e}");
+            assert_eq!(version(&installed).as_deref(), Some("9.9.9"));
         }
 
         #[test]

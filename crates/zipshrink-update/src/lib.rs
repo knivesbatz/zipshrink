@@ -442,9 +442,10 @@ pub fn launch_installer(path: &Path, restart: bool) -> std::io::Result<()> {
     mac::install(path, restart)
 }
 
-/// Removes what an earlier update left behind (staging folders of processes
-/// that are gone) and the quarantine flag of this app bundle, in the
-/// background. Call it once, from the main app instance, at start-up.
+/// Removes what earlier updates left behind (the staging folders of
+/// processes that are gone), in the background. Call it once, from the main
+/// app instance, at start-up. (The app clears its bundle's quarantine flag
+/// itself.)
 #[cfg(target_os = "macos")]
 pub fn mac_cleanup_leftovers() {
     std::thread::spawn(mac::cleanup_leftovers);
