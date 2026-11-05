@@ -16,42 +16,121 @@ env:
   CARGO_TERM_COLOR: always
   ZIPSHRINK_UPDATE_REPO: ${{ github.repository }}
 
+# Four files, built on two machines and published together, or not at all:
+#   ZipShrink-setup.exe  Windows (built on Linux)
+#   ZipShrink.dmg        Mac, for people
+#   ZipShrink-mac.zip    Mac, for the updater of installed copies
+#   SHA256SUMS           for the updater of ZipShrink 0.2 and 0.3
 jobs:
-  release:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: The tag matches the program's version
+        id: tag
+        env:
+          TAG_INPUT: ${{ inputs.tag }}
+        run: |
+          tag="${TAG_INPUT:-$GITHUB_REF_NAME}"
+          v=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"]=="zipshrink-cli"))')
+          test "$tag" = "v$v" || { echo "::error::tag $tag does not match version $v in Cargo.toml"; exit 1; }
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+
+  windows:
+    needs: version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-gnu
-      - run: sudo apt-get update && sudo apt-get install -y mingw-w64 nsis
-      - name: The tag matches the program's version
-        run: |
-          tag="${{ inputs.tag }}"; tag="${tag:-$GITHUB_REF_NAME}"
-          v=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"]=="zipshrink-cli"))')
-          test "$tag" = "v$v" || { echo "::error::tag $tag does not match version $v in Cargo.toml"; exit 1; }
+      - run: sudo apt-get update && sudo apt-get install -y mingw-w64
       - name: Build the installer
-        run: packaging/build-windows.sh
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: packaging/build-windows.sh "$TAG"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows
+          path: dist/ZipShrink-setup.exe
+          if-no-files-found: error
+
+  macos:
+    needs: version
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - name: Build the Mac app, disk image and updater zip
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: packaging/build-macos.sh "${TAG#v}"
+      - name: Check them before they are published
+        run: packaging/macos/check-app.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos
+          path: |
+            dist/ZipShrink.dmg
+            dist/ZipShrink-mac.zip
+          if-no-files-found: error
+
+  publish:
+    needs: [version, windows, macos]
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ needs.version.outputs.tag }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with: { name: windows, path: dist }
+      - uses: actions/download-artifact@v8
+        with: { name: macos, path: dist }
       - name: Checksums and release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eux
-          tag="${{ inputs.tag }}"; tag="${tag:-$GITHUB_REF_NAME}"
+          tag="$TAG"
           cd dist
-          # ZipShrink 0.2 and 0.3 verify updates with SHA256SUMS; later
-          # versions use the SHA-256 digest GitHub records for each file.
-          sha256sum ZipShrink-setup.exe > SHA256SUMS
+          files=(ZipShrink-setup.exe ZipShrink.dmg ZipShrink-mac.zip)
+          # ZipShrink 0.2 and 0.3 verify updates with SHA256SUMS and expect
+          # the installer's line first; later versions use the SHA-256
+          # digest GitHub records for each file.
+          sha256sum "${files[@]}" > SHA256SUMS
           cat SHA256SUMS
-          cat > ../notes.md <<'NOTES'
-          **Download `ZipShrink-setup.exe`** - it is the only file you need. It installs ZipShrink on 64-bit Windows 10 and Windows 11, and ZipShrink then keeps itself up to date.
+          cat > "$RUNNER_TEMP/notes.md" <<'NOTES'
+          ### Windows
 
-          (`SHA256SUMS` is read by the updater of older versions; you do not need to download it.)
+          **Download `ZipShrink-setup.exe`** and run it. It installs ZipShrink on 64-bit Windows 10 and Windows 11. If Windows SmartScreen says "Windows protected your PC", choose **More info**, then **Run anyway**.
+
+          ### Mac
+
+          **Download `ZipShrink.dmg`**, open it and drag **ZipShrink** onto **Applications**. It runs on macOS 11 Big Sur or later, on Apple silicon and Intel Macs.
+
+          ZipShrink is not notarized by Apple, so the first time you open it macOS refuses ("Apple could not verify..." or "...cannot be opened"). To open it anyway, once:
+
+          1. Click **Done** (or **OK**) in that message.
+          2. Open **System Settings > Privacy & Security** (on macOS 11 and 12: **System Preferences > Security & Privacy > General**), scroll down to "ZipShrink was blocked..." and click **Open Anyway**.
+          3. Click **Open** in the question that follows and enter your password if asked.
+
+          (On macOS 14 and earlier, Control-clicking ZipShrink in Applications and choosing **Open** also works.)
+
+          To compress from Finder, select files or folders, right-click and choose **Services > Compress with ZipShrink**. The entry appears once ZipShrink has been opened for the first time.
+
+          ### Both
+
+          ZipShrink keeps itself up to date. You do not need the other files: `ZipShrink-mac.zip` is the Mac app for the built-in updater, and `SHA256SUMS` is read by the updater of older versions.
           NOTES
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             # A release made in the web UI, or a draft left by a failed run:
             # attach the files to it and publish it.
-            gh release upload "$tag" ZipShrink-setup.exe SHA256SUMS --repo "$GITHUB_REPOSITORY" --clobber
+            gh release upload "$tag" "${files[@]}" SHA256SUMS --repo "$GITHUB_REPOSITORY" --clobber
             if [ "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = true ]; then
               gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --target "$GITHUB_SHA" --title "ZipShrink ${tag#v}"
             fi
@@ -59,37 +138,50 @@ jobs:
             gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --latest
           else
             # Creates the tag at the built commit when run by hand.
-            gh release create "$tag" ZipShrink-setup.exe SHA256SUMS --repo "$GITHUB_REPOSITORY" --title "ZipShrink ${tag#v}" --notes-file ../notes.md --generate-notes --target "$GITHUB_SHA" --latest
+            gh release create "$tag" "${files[@]}" SHA256SUMS --repo "$GITHUB_REPOSITORY" --title "ZipShrink ${tag#v}" --notes-file "$RUNNER_TEMP/notes.md" --generate-notes --target "$GITHUB_SHA" --latest
           fi
       - name: The published release is complete and its files are intact
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eux
-          tag="${{ inputs.tag }}"; tag="${tag:-$GITHUB_REF_NAME}"
+          tag="$TAG"
+          files=(ZipShrink-setup.exe ZipShrink.dmg ZipShrink-mac.zip SHA256SUMS)
           rel=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag")
           test "$(jq -r .draft <<<"$rel")" = false
           test "$(jq -r .prerelease <<<"$rel")" = false
           test "$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)" = "$tag"
+          # Exactly these four files, nothing else.
+          want=$(printf '%s\n' "${files[@]}" | LC_ALL=C sort)
+          have=$(jq -r '.assets[].name' <<<"$rel" | LC_ALL=C sort)
+          if [ "$have" != "$want" ]; then
+            echo "::error::release $tag holds: $(echo $have); expected: $(echo $want)"
+            exit 1
+          fi
           rm -rf check && mkdir check
-          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern ZipShrink-setup.exe --pattern SHA256SUMS --dir check
+          patterns=()
+          for f in "${files[@]}"; do patterns+=(--pattern "$f"); done
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" "${patterns[@]}" --dir check
           (cd check && sha256sum -c SHA256SUMS)
-          cmp check/ZipShrink-setup.exe dist/ZipShrink-setup.exe
-          digest=$(jq -r '.assets[] | select(.name == "ZipShrink-setup.exe") | .digest' <<<"$rel")
-          test "$digest" = "sha256:$(sha256sum dist/ZipShrink-setup.exe | cut -d' ' -f1)"
+          for f in "${files[@]}"; do
+            cmp "check/$f" "dist/$f"
+            digest=$(jq -r --arg n "$f" '.assets[] | select(.name == $n) | .digest' <<<"$rel")
+            test "$digest" = "sha256:$(sha256sum "dist/$f" | cut -d' ' -f1)"
+          done
       - name: Delete every other release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           # Only the new release stays, so there is one download to choose.
           # Runs only after the step above confirmed it is published and
-          # intact, so a failed run never leaves no release. Git tags stay.
+          # intact, so a failed run never leaves no release. Git tags stay,
+          # and so does the ci-fixtures prerelease (old installers for CI).
           set -eu
-          tag="${{ inputs.tag }}"; tag="${tag:-$GITHUB_REF_NAME}"
+          tag="$TAG"
           keep=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq .id)
           gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | "\(.id) \(.tag_name)"' |
             while read -r id name; do
-              if [ "$id" != "$keep" ] && [ "$name" != "$tag" ]; then
+              if [ "$id" != "$keep" ] && [ "$name" != "$tag" ] && [ "$name" != ci-fixtures ]; then
                 echo "Deleting release $name ($id)"
                 gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
               fi

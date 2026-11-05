@@ -104,7 +104,12 @@ fn spec(sheet: &Sheet, busy: bool) -> Spec<'static> {
             tone: Tone::Warning,
             title: "Delete originals as they're archived?".into(),
             body: vec![
-                "Each original is deleted permanently — not sent to the Recycle Bin — as soon as its compressed copy has been written, flushed to the disk, read back, decompressed, matched against the original's CRC-32 and SHA-256, and recorded in the recovery journal.".into(),
+                if cfg!(target_os = "macos") {
+                    "Each original is deleted permanently — not moved to the Trash — as soon as its compressed copy has been written, flushed to the disk, read back, decompressed, matched against the original's CRC-32 and SHA-256, and recorded in the recovery journal."
+                } else {
+                    "Each original is deleted permanently — not sent to the Recycle Bin — as soon as its compressed copy has been written, flushed to the disk, read back, decompressed, matched against the original's CRC-32 and SHA-256, and recorded in the recovery journal."
+                }
+                .into(),
                 "Files that change, can't be verified, or are read-only are kept. After an interruption the job can be resumed, but the archive will then hold the only copy of files already deleted. Keep a backup of anything irreplaceable.".into(),
             ],
             buttons: vec![("Cancel", Kind::Secondary, Choice::Cancel, true), ("Delete Originals", Kind::Destructive, Choice::Confirm, *understood)],

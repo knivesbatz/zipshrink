@@ -12,6 +12,9 @@ use std::time::{Duration, Instant};
 pub struct Resume {
     list: Vec<Unfinished>,
     checked_at: Option<Instant>,
+    /// Remembered jobs, counted without looking at their folders (macOS,
+    /// until the page is first shown).
+    remembered: usize,
 }
 
 impl Resume {
@@ -20,10 +23,27 @@ impl Resume {
         self.checked_at = Some(Instant::now());
     }
 
+    pub fn recount(&mut self) {
+        self.remembered = jobs::remembered();
+    }
+
+    /// Whether the folders of remembered jobs have been looked at.
+    pub fn checked(&self) -> bool {
+        self.checked_at.is_some()
+    }
+
     pub fn count(&self) -> usize {
-        self.list.len()
+        if self.checked() {
+            self.list.len()
+        } else {
+            self.remembered
+        }
     }
 }
+
+const UNREACHABLE: &str = "ZipShrink can't look in this folder now: its drive may not be connected, \
+or ZipShrink may not be allowed to open it. Connect the drive, or allow access, and the job shows here \
+again. Forget removes it from this list without touching any files.";
 
 fn ago(t: Option<std::time::SystemTime>) -> String {
     let Some(t) = t else { return String::new() };
@@ -46,6 +66,7 @@ pub fn page(app: &mut App, ui: &mut Ui) {
     }
     let busy = app.busy();
     let mut resume = None;
+    let mut forget = None;
     let mut open = false;
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         ui.add_space(space::XL);
@@ -85,8 +106,11 @@ pub fn page(app: &mut App, ui: &mut Ui) {
                     if resp.clicked() {
                         selected = Some(i);
                     }
-                    if resp.double_clicked() && !busy {
+                    if resp.double_clicked() && !busy && u.reachable {
                         resume = Some(u.output.clone());
+                    }
+                    if !u.reachable {
+                        resp.on_hover_text(UNREACHABLE);
                     }
                     let ic = Rect::from_center_size(pos2(ranges[0].0 + 10.0, rect.center().y), vec2(20.0, 20.0));
                     icons::paint(ui.painter(), ic, Icon::Archive, if is_sel { fg } else { p.accent });
@@ -96,16 +120,24 @@ pub fn page(app: &mut App, ui: &mut Ui) {
                     if u.deletes_originals {
                         name.push_str("  · deletes originals");
                     }
+                    if !u.reachable {
+                        name.push_str("  · not available now");
+                    }
                     let name = design::elide_end(ui, &name, typ::body(), maxw);
                     ui.painter().text(pos2(tx, rect.center().y - 7.0), Align2::LEFT_CENTER, name, typ::body(), fg);
                     let folder = design::elide_start(ui, &fmt::parent(&u.output), typ::caption(), maxw);
                     ui.painter().text(pos2(tx, rect.center().y + 8.0), Align2::LEFT_CENTER, folder, typ::caption(), fg2);
-                    ui.painter().text(pos2(ranges[1].0, rect.center().y), Align2::LEFT_CENTER, ago(u.modified), typ::body(), fg2);
+                    let when = if u.reachable { ago(u.modified) } else { "Unknown".into() };
+                    ui.painter().text(pos2(ranges[1].0, rect.center().y), Align2::LEFT_CENTER, when, typ::body(), fg2);
                     let br = Rect::from_min_max(pos2(ranges[2].0, rect.center().y - 12.0), pos2(ranges[2].1, rect.center().y + 12.0));
                     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(br).layout(Layout::right_to_left(Align::Center)));
-                    let b = child.add_enabled_ui(!busy, |ui| Button::secondary("Resume…").show(ui)).inner;
-                    if b.clicked() {
-                        resume = Some(u.output.clone());
+                    if u.reachable {
+                        let b = child.add_enabled_ui(!busy, |ui| Button::secondary("Resume…").show(ui)).inner;
+                        if b.clicked() {
+                            resume = Some(u.output.clone());
+                        }
+                    } else if Button::secondary("Forget").show(&mut child).on_hover_text(UNREACHABLE).clicked() {
+                        forget = Some(u.output.clone());
                     }
                 }
             });
@@ -116,6 +148,10 @@ pub fn page(app: &mut App, ui: &mut Ui) {
             }
         });
     });
+    if let Some(f) = forget {
+        jobs::forget(&f);
+        app.resume.refresh();
+    }
     if open {
         app.pick_job();
     }

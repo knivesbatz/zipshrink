@@ -5144,7 +5144,7 @@ dependencies = [
 
 [[package]]
 name = "zipshrink-cli"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -5163,7 +5163,7 @@ dependencies = [
 
 [[package]]
 name = "zipshrink-core"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "chrono",
  "crc32fast",
@@ -5184,9 +5184,13 @@ dependencies = [
 
 [[package]]
 name = "zipshrink-gui"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "eframe",
+ "libc",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
  "raw-window-handle",
  "rfd",
  "serde_json",
@@ -5197,13 +5201,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "zipshrink-setup"
+version = "1.1.0"
+dependencies = [
+ "eframe",
+ "flate2",
+ "raw-window-handle",
+ "rfd",
+ "windows-sys 0.61.2",
+ "winresource",
+]
+
+[[package]]
 name = "zipshrink-update"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "hex",
+ "libc",
  "serde",
  "serde_json",
  "sha2",
+ "tempfile",
  "ureq",
 ]
 

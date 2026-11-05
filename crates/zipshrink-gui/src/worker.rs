@@ -181,11 +181,14 @@ pub fn download_update(
 ) -> Receiver<Result<PathBuf, String>> {
     let (tx, rx) = channel();
     std::thread::spawn(move || {
+        // On macOS this also unpacks and checks the new app, so installing
+        // later is only a swap.
         let r = zipshrink_update::download_installer(&release, &mut |d, t| {
             done.store(d, Ordering::Relaxed);
             total.store(t, Ordering::Relaxed);
             ctx.request_repaint_after(Duration::from_millis(100));
         })
+        .and_then(|path| zipshrink_update::prepare_update(&path))
         .map_err(|e| e.to_string());
         let _ = tx.send(r);
         ctx.request_repaint();

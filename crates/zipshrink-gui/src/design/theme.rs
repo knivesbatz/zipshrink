@@ -41,9 +41,27 @@ pub fn pal(ctx: &Context) -> Palette {
 /// Run at the start of every frame: resolves the appearance, animates the
 /// palette toward it and refreshes egui's visuals while it changes.
 pub fn frame(ctx: &Context, appearance: Appearance) -> Palette {
+    if cfg!(target_os = "macos") {
+        // The window's own appearance (traffic lights, alerts, the open
+        // panel) follows the app's choice.
+        let id = Id::unique("zs.window-theme");
+        if ctx.data(|d| d.get_temp::<Appearance>(id)) != Some(appearance) {
+            ctx.data_mut(|d| d.insert_temp(id, appearance));
+            ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(match appearance {
+                Appearance::System => egui::SystemTheme::SystemDefault,
+                Appearance::Light => egui::SystemTheme::Light,
+                Appearance::Dark => egui::SystemTheme::Dark,
+            }));
+        }
+    }
     let dark = match appearance {
         Appearance::Light => false,
         Appearance::Dark => true,
+        // While the window's appearance is forced, winit stops reporting
+        // system changes, so on macOS ask the system directly.
+        #[cfg(target_os = "macos")]
+        Appearance::System => crate::macos::system_dark(),
+        #[cfg(not(target_os = "macos"))]
         Appearance::System => ctx.system_theme().unwrap_or(Theme::Light) == Theme::Dark,
     };
     let t = motion::fade(ctx, Id::unique("zs.appearance"), dark, tokens::motion::SLOW);
@@ -64,6 +82,8 @@ pub fn frame(ctx: &Context, appearance: Appearance) -> Palette {
 
 fn visuals(p: &Palette, dark: bool) -> Visuals {
     let mut v = if dark { Visuals::dark() } else { Visuals::light() };
+    // macOS draws text unhinted; hinted glyphs look out of place there.
+    v.text_options.font_hinting = !cfg!(target_os = "macos");
     let ctl = corner(radius::CONTROL);
     let stroke = |c: Color32| Stroke::new(1.0, c);
     v.panel_fill = p.bg;
