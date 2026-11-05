@@ -68,7 +68,7 @@ pub fn canonical_roots(sources: &[PathBuf]) -> Result<Vec<PathBuf>> {
         // On macOS every drive is a folder under /Volumes: a folder on a
         // different volume from its parent is the top of a drive.
         #[cfg(target_os = "macos")]
-        if kind == Kind::Dir && is_mount_point(&c) {
+        if kind == Kind::Dir && platform::is_mount_point(&c) {
             return Err(Error::Invalid(format!(
                 "{} is the top of a separate drive or volume; select folders inside it instead",
                 c.display()
@@ -82,16 +82,6 @@ pub fn canonical_roots(sources: &[PathBuf]) -> Result<Vec<PathBuf>> {
         roots.push(c);
     }
     Ok(roots)
-}
-
-#[cfg(target_os = "macos")]
-fn is_mount_point(p: &Path) -> bool {
-    use std::os::unix::fs::MetadataExt;
-    let Some(parent) = p.parent() else { return true };
-    match (std::fs::symlink_metadata(p), std::fs::metadata(parent)) {
-        (Ok(a), Ok(b)) => a.dev() != b.dev(),
-        _ => false,
-    }
 }
 
 fn meta_for(name: String, is_dir: bool, st: &FileStat) -> EntryMeta {
