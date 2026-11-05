@@ -91,7 +91,9 @@ pub struct App {
     closing: bool,
     /// The single-instance lock and the inbox other launches write to.
     instance: Option<crate::instance::Primary>,
-    next_inbox: f64,
+    /// Wall-clock time: `logic` also runs while the window is hidden, when
+    /// egui's input time stands still.
+    next_inbox: std::time::Instant,
     /// Smoke-test mode (`ZIPSHRINK_SMOKE`): first frame reported, close sent.
     smoke_ready: bool,
     smoke_closed: bool,
@@ -115,14 +117,17 @@ impl App {
             settings,
             closing: false,
             instance,
-            next_inbox: 0.0,
+            next_inbox: std::time::Instant::now(),
             smoke_ready: false,
             smoke_closed: false,
         };
         // On macOS remembered jobs may sit in protected folders (Desktop,
         // Documents) whose access an update resets; look at them only when
-        // the Resume page opens, not at every start.
-        if !cfg!(target_os = "macos") {
+        // the Resume page opens, not at every start, and until then count
+        // the remembered ones.
+        if cfg!(target_os = "macos") {
+            app.resume.recount();
+        } else {
             app.resume.refresh();
         }
         app.open_paths(ctx, sources);
@@ -186,15 +191,19 @@ impl App {
     /// Paths handed over by later launches (Explorer's right-click menu
     /// starts one per selected item).
     fn poll_inbox(&mut self, ctx: &egui::Context) {
-        let now = ctx.input(|i| i.time);
-        if self.instance.is_none() || now < self.next_inbox {
+        const EVERY: std::time::Duration = std::time::Duration::from_millis(400);
+        if self.instance.is_none() {
             return;
         }
-        self.next_inbox = now + 0.4;
-        ctx.request_repaint_after(std::time::Duration::from_millis(400));
+        let now = std::time::Instant::now();
+        if now < self.next_inbox {
+            ctx.request_repaint_after(self.next_inbox - now);
+            return;
+        }
+        self.next_inbox = now + EVERY;
+        ctx.request_repaint_after(EVERY);
         let Some(msgs) = self.instance.as_ref().and_then(|i| i.take()) else { return };
-        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        reveal(ctx);
         for m in msgs {
             match m {
                 crate::instance::Message::Open(paths) => self.open_paths(ctx, paths),
@@ -210,8 +219,7 @@ impl App {
         for e in crate::macos::take() {
             match e {
                 crate::macos::Event::Open(paths) => {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                    reveal(ctx);
                     self.open_paths(ctx, paths);
                 }
                 crate::macos::Event::Command(c) => {
@@ -312,6 +320,9 @@ impl App {
             if !self.compress.closing_after_stop() {
                 crate::smoke::log("confirm-close");
                 self.sheets.open(Sheet::ConfirmClose);
+                // Quit from the Dock or at log out may come while the
+                // window is minimized or hidden: show the question.
+                reveal(ctx);
             }
             return;
         }
@@ -571,10 +582,11 @@ impl App {
         }
     }
 
-    /// `ZIPSHRINK_SMOKE`: report the first frame and a few platform facts,
-    /// then close once the time is up.
-    fn smoke(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
-        let Some(left) = crate::smoke::remaining() else { return };
+    /// `ZIPSHRINK_SMOKE`: report the first frame and a few platform facts.
+    fn smoke_ready(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
+        if crate::smoke::remaining().is_none() {
+            return;
+        }
         if !self.smoke_ready {
             self.smoke_ready = true;
             crate::smoke::log("ready");
@@ -589,6 +601,11 @@ impl App {
         }
         #[cfg(not(target_os = "macos"))]
         let _ = frame;
+    }
+
+    /// `ZIPSHRINK_SMOKE`: close once the time is up (also while hidden).
+    fn smoke_timer(&mut self, ctx: &egui::Context) {
+        let Some(left) = crate::smoke::remaining() else { return };
         if !left.is_zero() {
             ctx.request_repaint_after(left);
         } else if !self.smoke_closed {
@@ -640,7 +657,40 @@ pub fn main_rect(ctx: &egui::Context) -> Rect {
     ctx.data(|d| d.get_temp(Id::unique("zs.main-rect"))).unwrap_or_else(|| ctx.content_rect())
 }
 
+/// Brings the window back (from the Dock, from Hide or from behind other
+/// windows) for something that needs the user: files handed over, or a
+/// question before quitting.
+fn reveal(ctx: &egui::Context) {
+    #[cfg(target_os = "macos")]
+    crate::macos::reveal();
+    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+}
+
 impl eframe::App for App {
+    /// Runs before every frame, and also while the window is minimized,
+    /// hidden or covered, when eframe skips `ui`: Quit (from the Dock, the
+    /// menu or at log out), files from Finder, Services and other launches,
+    /// and the end of a job must not wait for the window to be seen again.
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        #[cfg(target_os = "macos")]
+        self.macos_events(ctx);
+        self.handle_close(ctx);
+        self.poll_inbox(ctx);
+        self.compress.poll(ctx, &mut self.sheets, &mut self.toasts);
+        if let Some(outputs) = self.compress.take_finished_outputs() {
+            jobs::prune(&outputs);
+            // Look in other folders only where that is no privacy question,
+            // or after the Resume page did.
+            if cfg!(target_os = "macos") && !self.resume.checked() {
+                self.resume.recount();
+            } else {
+                self.resume.refresh();
+            }
+        }
+        self.smoke_timer(ctx);
+    }
+
     fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         motion::set_reduced(&ctx, self.reduce_motion());
@@ -649,15 +699,7 @@ impl eframe::App for App {
         // Big Sur's unified title bar (AppKit moves them back on every
         // layout, so this runs every frame). Does nothing elsewhere.
         frame.set_traffic_lights_position(&ctx, egui::Rangef::new(0.0, space::TOOLBAR), 13.0);
-        #[cfg(target_os = "macos")]
-        self.macos_events(&ctx);
-        self.handle_close(&ctx);
-        self.poll_inbox(&ctx);
-        self.compress.poll(&ctx, &mut self.sheets, &mut self.toasts);
         self.verify.poll();
-        if self.compress.take_finished_outputs().is_some() {
-            self.resume.refresh();
-        }
         self.updates.poll(&ctx, self.busy(), &mut self.toasts, &mut self.settings);
         self.shortcuts(&ctx);
         self.window_title(&ctx);
@@ -693,7 +735,7 @@ impl eframe::App for App {
         self.drop_overlay(&ctx, main);
         sheets::ui(self, &ctx);
         chrome::resize_edges(&ctx);
-        self.smoke(&ctx, frame);
+        self.smoke_ready(&ctx, frame);
     }
 
     /// Last resort for quitting paths that never ask the window to close

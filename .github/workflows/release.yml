@@ -49,7 +49,9 @@ jobs:
           targets: x86_64-pc-windows-gnu
       - run: sudo apt-get update && sudo apt-get install -y mingw-w64
       - name: Build the installer
-        run: packaging/build-windows.sh
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: packaging/build-windows.sh "$TAG"
       - uses: actions/upload-artifact@v7
         with:
           name: windows
@@ -172,13 +174,14 @@ jobs:
         run: |
           # Only the new release stays, so there is one download to choose.
           # Runs only after the step above confirmed it is published and
-          # intact, so a failed run never leaves no release. Git tags stay.
+          # intact, so a failed run never leaves no release. Git tags stay,
+          # and so does the ci-fixtures prerelease (old installers for CI).
           set -eu
           tag="$TAG"
           keep=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq .id)
           gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | "\(.id) \(.tag_name)"' |
             while read -r id name; do
-              if [ "$id" != "$keep" ] && [ "$name" != "$tag" ]; then
+              if [ "$id" != "$keep" ] && [ "$name" != "$tag" ] && [ "$name" != ci-fixtures ]; then
                 echo "Deleting release $name ($id)"
                 gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
               fi
