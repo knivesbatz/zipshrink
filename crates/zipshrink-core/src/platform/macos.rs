@@ -360,6 +360,25 @@ mod sys {
         (!name.is_empty()).then(|| super::fs_display_name(name))
     }
 
+    /// Whether `path` (canonical) is where a volume is mounted. APFS
+    /// volume groups firmlink the Data volume into the System volume, so a
+    /// device number comparison with the parent is not enough: `statfs`
+    /// names the mount point of the volume holding the path.
+    pub fn is_mount_point(path: &Path) -> bool {
+        use std::os::unix::fs::MetadataExt;
+        if let Ok(s) = statfs(path) {
+            let on = unsafe { CStr::from_ptr(s.f_mntonname.as_ptr()) };
+            if on.to_bytes() == path.as_os_str().as_encoded_bytes() {
+                return true;
+            }
+        }
+        let Some(parent) = path.parent() else { return true };
+        match (fs::symlink_metadata(path), fs::metadata(parent)) {
+            (Ok(a), Ok(b)) => a.dev() != b.dev(),
+            _ => false,
+        }
+    }
+
     /// `statfs` keeps 64-bit block counts (`statvfs` on macOS has 32-bit ones).
     pub fn available_space(path: &Path) -> io::Result<u64> {
         let s = statfs(path)?;

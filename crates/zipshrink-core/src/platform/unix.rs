@@ -471,3 +471,9 @@ mod macos_tests {
         assert!(super::super::available_space(t.path()).unwrap() > 0);
     }
 }
+
+/// Whether a folder is the top of a mounted volume.
+#[cfg(target_os = "macos")]
+pub fn is_mount_point(path: &Path) -> bool {
+    super::macos::is_mount_point(path)
+}
