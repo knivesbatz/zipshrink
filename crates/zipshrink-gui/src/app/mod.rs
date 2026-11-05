@@ -49,6 +49,22 @@ impl Page {
     }
 }
 
+/// Commands from the keyboard and the macOS menu bar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub enum Cmd {
+    /// Add files, choose archives or open a job, depending on the page.
+    Open,
+    OpenFolder,
+    Go(Page),
+    /// Close the window (asks first while a job runs).
+    Close,
+    /// Quit: the same path as closing the window, even with a sheet open.
+    Quit,
+    InstallCli,
+    Help,
+}
+
 /// Toolbar actions, handled after the frame is drawn.
 enum Tool {
     AddFiles,
@@ -75,7 +91,12 @@ pub struct App {
     closing: bool,
     /// The single-instance lock and the inbox other launches write to.
     instance: Option<crate::instance::Primary>,
-    next_inbox: f64,
+    /// Wall-clock time: `logic` also runs while the window is hidden, when
+    /// egui's input time stands still.
+    next_inbox: std::time::Instant,
+    /// Smoke-test mode (`ZIPSHRINK_SMOKE`): first frame reported, close sent.
+    smoke_ready: bool,
+    smoke_closed: bool,
 }
 
 impl App {
@@ -96,9 +117,19 @@ impl App {
             settings,
             closing: false,
             instance,
-            next_inbox: 0.0,
+            next_inbox: std::time::Instant::now(),
+            smoke_ready: false,
+            smoke_closed: false,
         };
-        app.resume.refresh();
+        // On macOS remembered jobs may sit in protected folders (Desktop,
+        // Documents) whose access an update resets; look at them only when
+        // the Resume page opens, not at every start, and until then count
+        // the remembered ones.
+        if cfg!(target_os = "macos") {
+            app.resume.recount();
+        } else {
+            app.resume.refresh();
+        }
         app.open_paths(ctx, sources);
         if let Some(r) = resume {
             app.ask_resume(r);
@@ -119,6 +150,7 @@ impl App {
         if paths.is_empty() {
             return;
         }
+        crate::smoke::opened(&paths);
         let (jobs, rest): (Vec<PathBuf>, Vec<PathBuf>) = paths.into_iter().partition(|p| {
             let s = p.to_string_lossy();
             s.ends_with(".partial") || s.ends_with(".partial.journal")
@@ -159,20 +191,81 @@ impl App {
     /// Paths handed over by later launches (Explorer's right-click menu
     /// starts one per selected item).
     fn poll_inbox(&mut self, ctx: &egui::Context) {
-        let now = ctx.input(|i| i.time);
-        if self.instance.is_none() || now < self.next_inbox {
+        const EVERY: std::time::Duration = std::time::Duration::from_millis(400);
+        if self.instance.is_none() {
             return;
         }
-        self.next_inbox = now + 0.4;
-        ctx.request_repaint_after(std::time::Duration::from_millis(400));
+        let now = std::time::Instant::now();
+        if now < self.next_inbox {
+            ctx.request_repaint_after(self.next_inbox - now);
+            return;
+        }
+        self.next_inbox = now + EVERY;
+        ctx.request_repaint_after(EVERY);
         let Some(msgs) = self.instance.as_ref().and_then(|i| i.take()) else { return };
-        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        reveal(ctx);
         for m in msgs {
             match m {
                 crate::instance::Message::Open(paths) => self.open_paths(ctx, paths),
                 crate::instance::Message::Resume(p) => self.ask_resume(p),
             }
+        }
+    }
+
+    /// Files from Finder, the Dock and the Services menu, menu commands and
+    /// Quit, queued by the AppKit bridge.
+    #[cfg(target_os = "macos")]
+    fn macos_events(&mut self, ctx: &egui::Context) {
+        for e in crate::macos::take() {
+            match e {
+                crate::macos::Event::Open(paths) => {
+                    reveal(ctx);
+                    self.open_paths(ctx, paths);
+                }
+                crate::macos::Event::Command(c) => {
+                    if c == Cmd::Quit {
+                        crate::smoke::log("quit");
+                    }
+                    self.command(ctx, c);
+                }
+                crate::macos::Event::CliInstalled(Ok(())) => {
+                    self.toasts.show(design::Tone::Success, "Command Line Tool Installed", "Type zipshrink in Terminal to use it.")
+                }
+                crate::macos::Event::CliInstalled(Err(e)) => {
+                    self.toasts.show(design::Tone::Error, "The Command Line Tool Couldn't Be Installed", &e)
+                }
+            }
+        }
+    }
+
+    fn command(&mut self, ctx: &egui::Context, cmd: Cmd) {
+        if cmd == Cmd::Quit {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
+        if self.sheets.is_open() {
+            return;
+        }
+        let idle_compress = self.page == Page::Compress && !self.busy();
+        match cmd {
+            Cmd::Go(page) => self.navigate(page),
+            Cmd::Open => match self.page {
+                Page::Verify => self.verify.pick(ctx),
+                Page::Resume => self.pick_job(),
+                _ if idle_compress => self.compress.pick_files(),
+                _ => {}
+            },
+            Cmd::OpenFolder => {
+                if idle_compress {
+                    self.compress.pick_folder();
+                }
+            }
+            Cmd::Close | Cmd::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            Cmd::InstallCli => {
+                #[cfg(target_os = "macos")]
+                crate::macos::install_cli();
+            }
+            Cmd::Help => zipshrink_update::open_url(&format!("https://github.com/{}#readme", zipshrink_update::REPO)),
         }
     }
 
@@ -189,27 +282,22 @@ impl App {
         if self.sheets.is_open() {
             return;
         }
+        // On macOS the menu bar takes these keys first and sends the same
+        // commands.
         let cmd = |k: Key| KeyboardShortcut::new(Modifiers::COMMAND, k);
-        let pages = [(Key::Num1, Page::Compress), (Key::Num2, Page::Verify), (Key::Num3, Page::Resume), (Key::Comma, Page::Preferences)];
-        for (k, page) in pages {
-            if ctx.input_mut(|i| i.consume_shortcut(&cmd(k))) {
-                self.navigate(page);
+        let keys = [
+            (cmd(Key::Num1), Cmd::Go(Page::Compress)),
+            (cmd(Key::Num2), Cmd::Go(Page::Verify)),
+            (cmd(Key::Num3), Cmd::Go(Page::Resume)),
+            (cmd(Key::Comma), Cmd::Go(Page::Preferences)),
+            (KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::O), Cmd::OpenFolder),
+            (cmd(Key::O), Cmd::Open),
+            (cmd(Key::W), Cmd::Close),
+        ];
+        for (k, c) in keys {
+            if ctx.input_mut(|i| i.consume_shortcut(&k)) {
+                self.command(ctx, c);
             }
-        }
-        let idle_compress = self.page == Page::Compress && !self.busy();
-        if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::O))) && idle_compress {
-            self.compress.pick_folder();
-        }
-        if ctx.input_mut(|i| i.consume_shortcut(&cmd(Key::O))) {
-            match self.page {
-                Page::Verify => self.verify.pick(ctx),
-                Page::Resume => self.pick_job(),
-                _ if idle_compress => self.compress.pick_files(),
-                _ => {}
-            }
-        }
-        if ctx.input_mut(|i| i.consume_shortcut(&cmd(Key::W))) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
 
@@ -230,7 +318,11 @@ impl App {
         if self.busy() && !self.closing {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             if !self.compress.closing_after_stop() {
+                crate::smoke::log("confirm-close");
                 self.sheets.open(Sheet::ConfirmClose);
+                // Quit from the Dock or at log out may come while the
+                // window is minimized or hidden: show the question.
+                reveal(ctx);
             }
             return;
         }
@@ -490,6 +582,39 @@ impl App {
         }
     }
 
+    /// `ZIPSHRINK_SMOKE`: report the first frame and a few platform facts.
+    fn smoke_ready(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
+        if crate::smoke::remaining().is_none() {
+            return;
+        }
+        if !self.smoke_ready {
+            self.smoke_ready = true;
+            crate::smoke::log("ready");
+            crate::smoke::log(&format!("system_theme={:?} reduce_motion={}", ctx.system_theme(), motion::system_prefers_reduced()));
+            #[cfg(target_os = "macos")]
+            {
+                use raw_window_handle::HasWindowHandle;
+                if let Ok(h) = frame.window_handle() {
+                    crate::smoke::log(&format!("chrome {:?}", eframe::WindowChromeMetrics::from_window_handle(&h.as_raw())));
+                }
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = frame;
+    }
+
+    /// `ZIPSHRINK_SMOKE`: close once the time is up (also while hidden).
+    fn smoke_timer(&mut self, ctx: &egui::Context) {
+        let Some(left) = crate::smoke::remaining() else { return };
+        if !left.is_zero() {
+            ctx.request_repaint_after(left);
+        } else if !self.smoke_closed {
+            self.smoke_closed = true;
+            crate::smoke::log("close");
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
+
     fn apply_tool(&mut self, ctx: &egui::Context, tool: Tool) {
         match tool {
             Tool::AddFiles => self.compress.pick_files(),
@@ -532,18 +657,49 @@ pub fn main_rect(ctx: &egui::Context) -> Rect {
     ctx.data(|d| d.get_temp(Id::unique("zs.main-rect"))).unwrap_or_else(|| ctx.content_rect())
 }
 
+/// Brings the window back (from the Dock, from Hide or from behind other
+/// windows) for something that needs the user: files handed over, or a
+/// question before quitting.
+fn reveal(ctx: &egui::Context) {
+    #[cfg(target_os = "macos")]
+    crate::macos::reveal();
+    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+}
+
 impl eframe::App for App {
-    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+    /// Runs before every frame, and also while the window is minimized,
+    /// hidden or covered, when eframe skips `ui`: Quit (from the Dock, the
+    /// menu or at log out), files from Finder, Services and other launches,
+    /// and the end of a job must not wait for the window to be seen again.
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        #[cfg(target_os = "macos")]
+        self.macos_events(ctx);
+        self.handle_close(ctx);
+        self.poll_inbox(ctx);
+        self.compress.poll(ctx, &mut self.sheets, &mut self.toasts);
+        if let Some(outputs) = self.compress.take_finished_outputs() {
+            jobs::prune(&outputs);
+            // Look in other folders only where that is no privacy question,
+            // or after the Resume page did.
+            if cfg!(target_os = "macos") && !self.resume.checked() {
+                self.resume.recount();
+            } else {
+                self.resume.refresh();
+            }
+        }
+        self.smoke_timer(ctx);
+    }
+
+    fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         motion::set_reduced(&ctx, self.reduce_motion());
         let p = theme::frame(&ctx, self.appearance);
-        self.handle_close(&ctx);
-        self.poll_inbox(&ctx);
-        self.compress.poll(&ctx, &mut self.sheets, &mut self.toasts);
+        // macOS: the real traffic lights, centred in the toolbar strip like
+        // Big Sur's unified title bar (AppKit moves them back on every
+        // layout, so this runs every frame). Does nothing elsewhere.
+        frame.set_traffic_lights_position(&ctx, egui::Rangef::new(0.0, space::TOOLBAR), 13.0);
         self.verify.poll();
-        if self.compress.take_finished_outputs().is_some() {
-            self.resume.refresh();
-        }
         self.updates.poll(&ctx, self.busy(), &mut self.toasts, &mut self.settings);
         self.shortcuts(&ctx);
         self.window_title(&ctx);
@@ -579,6 +735,13 @@ impl eframe::App for App {
         self.drop_overlay(&ctx, main);
         sheets::ui(self, &ctx);
         chrome::resize_edges(&ctx);
+        self.smoke_ready(&ctx, frame);
+    }
+
+    /// Last resort for quitting paths that never ask the window to close
+    /// (`close_requested` is not set): a downloaded update still installs.
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.updates.install_on_close();
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {

@@ -47,6 +47,34 @@ the file is kept.
 Folders are removed only at the very end, deepest first, only when empty, and
 only if they lie inside a selected folder.
 
+### On a Mac
+
+The steps are the same; the system calls differ:
+
+* **Open and change check:** files are opened with `O_NOFOLLOW`; identity is
+  device and inode. iCloud Drive files whose contents are not downloaded
+  (`SF_DATALESS`) are refused rather than downloaded, and a selected folder
+  that is another mounted disk is refused.
+* **Flush:** `F_FULLFSYNC`, which also empties the drive's cache. Where a
+  file system refuses it (some network, FUSE or exFAT volumes), ZipShrink
+  falls back to `F_BARRIERFSYNC` and then `fsync`, and the report says the
+  drive cache was not flushed. Each full flush of the archive or journal
+  also makes the earlier folder changes on that volume durable, since they
+  share the destination folder.
+* **Read back:** the archive's cached pages are dropped (`msync` with
+  `MS_INVALIDATE`) and the entry is read through a second handle with
+  `F_NOCACHE`. If macOS does not allow the pages to be dropped, the report
+  says the check was read from the cache instead of claiming it came from
+  the disk.
+* **Delete:** just before the file is removed, its extended attributes are
+  listed. Anything a ZIP cannot hold (Finder tags and comments, a resource
+  fork, Finder info, other apps' attributes) keeps the original, with the
+  reason shown; only download and housekeeping attributes such as
+  `com.apple.quarantine` are ignored. Folders are checked the same way.
+  Files locked in the Finder (`uchg`) count as read-only; when deleting
+  read-only files is allowed, the lock is cleared just before deletion and
+  put back if it fails. System-locked files are always kept.
+
 ## Finalization
 
 1. An `S` record is journaled.
@@ -132,14 +160,16 @@ it are still in their original place.
   present unchanged or in the archive with an identical SHA-256**, and for every
   successful run that extracting the archive with an independent reader
   reproduces every original's SHA-256 exactly. "The ZIP opens" is never enough.
-* CI runs the suites on Windows and Linux, and a round trip with deletion
-  and splitting checked by 7-Zip.
+* CI runs the suites on Windows, Linux and macOS (Apple silicon and Intel),
+  and a round trip with deletion and splitting checked by 7-Zip and
+  Python's `zipfile`; on a Mac also a round trip through the shipped app's
+  command line tool, extracted with `ditto`.
 
 ## What ZipShrink cannot protect against
 
 * **Lying hardware.** If a drive acknowledges a flush it has not done (some
   consumer drives and USB bridges with volatile write caches), a power cut can
-  still lose data that was "verified". The read-back bypasses the Windows
+  still lose data that was "verified". The read-back bypasses the system's
   cache but cannot see inside the drive's own cache.
 * **Damage after the job.** Once originals are deleted the archive is the only
   copy. Keep backups of irreplaceable data.
@@ -147,3 +177,5 @@ it are still in their original place.
   Prefer local disks when deleting originals.
 * **Metadata not stored in ZIP** (see FORMATS_AND_LIMITATIONS.md) is lost with
   the original: ACLs, alternate data streams, extended attributes, ownership.
+  (On a Mac, originals with Finder tags, comments or resource forks are kept
+  instead; see above.)

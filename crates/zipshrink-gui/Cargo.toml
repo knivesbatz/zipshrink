@@ -25,5 +25,34 @@ raw-window-handle = "0.6"
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_UI_Controls", "Win32_UI_WindowsAndMessaging"] }
 
+# The AppKit bridge: Finder's "Open With", Dock drops, the Services menu
+# entry, the menu bar and Quit (src/macos.rs). Same versions eframe uses.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.5"
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "NSAppleEventDescriptor",
+    "NSAppleEventManager",
+    "NSArray",
+    "NSNotification",
+    "NSObject",
+    "NSString",
+    "NSURL",
+    "NSUserDefaults",
+] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "NSAccessibility",
+    "NSAppearance",
+    "NSApplication",
+    "NSEvent",
+    "NSMenu",
+    "NSMenuItem",
+    "NSPasteboard",
+    "NSResponder",
+    "NSWorkspace",
+] }
+libc = "0.2.191"
+
 [build-dependencies]
 winresource = { version = "0.1", default-features = false }

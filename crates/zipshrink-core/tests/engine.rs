@@ -435,3 +435,93 @@ fn zip64_more_than_65535_entries() {
     assert_eq!(r.outcome, Outcome::Completed, "{r:?}");
     assert_eq!(archive_entries(&out), want);
 }
+
+#[cfg(target_os = "macos")]
+mod macos {
+    use super::*;
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    use std::path::Path;
+
+    fn cpath(p: &Path) -> CString {
+        CString::new(p.as_os_str().as_bytes()).unwrap()
+    }
+
+    fn chflags(p: &Path, flags: u32) {
+        let r = unsafe { libc::chflags(cpath(p).as_ptr(), flags) };
+        assert_eq!(r, 0, "chflags {}: {}", p.display(), std::io::Error::last_os_error());
+    }
+
+    fn setxattr(p: &Path, name: &str, value: &[u8]) {
+        let n = CString::new(name).unwrap();
+        let r = unsafe { libc::setxattr(cpath(p).as_ptr(), n.as_ptr(), value.as_ptr().cast(), value.len(), 0, 0) };
+        assert_eq!(r, 0, "setxattr {name} on {}: {}", p.display(), std::io::Error::last_os_error());
+    }
+
+    #[test]
+    fn locked_files_are_kept_unless_allowed() {
+        let (_t, src, out) = setup();
+        let locked = src.join("readme.txt");
+        chflags(&locked, libc::UF_IMMUTABLE);
+        let want = expected_entries(&src);
+        let r = create_and_run(std::slice::from_ref(&src), &out, JobOptions { delete_originals: true, ..opts() });
+        chflags(&locked, 0);
+        assert_eq!(r.outcome, Outcome::CompletedWithIssues, "{r:?}");
+        assert_eq!(archive_entries(&out), want);
+        assert_eq!(remaining_files(&src), vec![PathBuf::from("readme.txt")]);
+        assert_eq!(r.kept.len(), 1);
+        assert!(r.kept[0].1.contains("read-only"), "{:?}", r.kept);
+    }
+
+    #[test]
+    fn locked_files_are_deleted_when_allowed() {
+        let (_t, src, out) = setup();
+        let locked = src.join("readme.txt");
+        chflags(&locked, libc::UF_IMMUTABLE);
+        let want = expected_entries(&src);
+        let r = create_and_run(std::slice::from_ref(&src), &out, JobOptions { delete_originals: true, delete_readonly: true, ..opts() });
+        if locked.exists() {
+            chflags(&locked, 0);
+        }
+        assert_eq!(r.outcome, Outcome::Completed, "{r:?}");
+        assert_eq!(archive_entries(&out), want);
+        assert!(!src.exists(), "the locked file was unlocked and deleted");
+    }
+
+    #[test]
+    fn originals_with_metadata_a_zip_cannot_hold_are_kept() {
+        let (_t, src, out) = setup();
+        let tagged = src.join("readme.txt");
+        let fork = src.join("random/b.bin");
+        let quarantined = src.join("text/lorem.txt");
+        let tagged_dir = src.join("empty dir/nested empty");
+        setxattr(&tagged, "com.apple.metadata:_kMDItemUserTags", b"bplist00");
+        setxattr(&fork, "com.apple.ResourceFork", b"resource fork data");
+        setxattr(&quarantined, "com.apple.quarantine", b"0081;00000000;ZipShrinkTest;");
+        setxattr(&tagged_dir, "com.apple.metadata:_kMDItemUserTags", b"bplist00");
+        let want = expected_entries(&src);
+        let r = create_and_run(std::slice::from_ref(&src), &out, JobOptions { delete_originals: true, ..opts() });
+        assert_eq!(r.outcome, Outcome::CompletedWithIssues, "{r:?}");
+        assert_eq!(archive_entries(&out), want, "all three files are in the archive");
+        assert_eq!(remaining_files(&src), vec![PathBuf::from("random/b.bin"), PathBuf::from("readme.txt")]);
+        assert!(!quarantined.exists(), "a quarantine flag alone does not keep a file");
+        assert!(tagged_dir.is_dir(), "a tagged empty folder is kept");
+        let reasons: Vec<&str> = r.kept.iter().map(|(_, why)| why.as_str()).collect();
+        assert!(reasons.iter().any(|w| w.contains("Finder tags")), "{reasons:?}");
+        assert!(reasons.iter().any(|w| w.contains("resource fork")), "{reasons:?}");
+    }
+
+    #[test]
+    fn the_top_of_a_volume_is_refused_as_a_source() {
+        // The Data volume is mounted on a folder of the System volume.
+        let err = scan::canonical_roots(&[PathBuf::from("/System/Volumes/Data")]).expect_err("a mount point is refused");
+        assert!(err.to_string().contains("separate drive"), "{err}");
+        let t = tempfile::tempdir().unwrap();
+        assert!(scan::canonical_roots(&[t.path().to_path_buf()]).is_ok());
+        // Firmlinked folders are on the Data volume, under the System
+        // volume's root, but they are not mount points.
+        for p in ["/Applications", "/Users"] {
+            assert!(scan::canonical_roots(&[PathBuf::from(p)]).is_ok(), "{p}");
+        }
+    }
+}

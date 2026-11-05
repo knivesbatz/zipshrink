@@ -140,7 +140,14 @@ pub fn page(app: &mut App, ui: &mut Ui) {
                                 }
                             }
                         });
-                        design::help(ui, "Auto follows the appearance set in Windows.");
+                        design::help(
+                            ui,
+                            if cfg!(target_os = "macos") {
+                                "Auto follows the appearance set in System Settings."
+                            } else {
+                                "Auto follows the appearance set in Windows."
+                            },
+                        );
                     });
                     ui.add_space(space::L);
                     let system = motion::system_prefers_reduced();
@@ -154,7 +161,9 @@ pub fn page(app: &mut App, ui: &mut Ui) {
                         });
                         design::help(
                             ui,
-                            if system {
+                            if system && cfg!(target_os = "macos") {
+                                "On because Reduce motion is turned on in System Settings > Accessibility > Display."
+                            } else if system {
                                 "On because animation effects are turned off in Windows Settings."
                             } else {
                                 "Replaces sliding and scaling with simple fades."
@@ -185,7 +194,7 @@ pub fn page(app: &mut App, ui: &mut Ui) {
                         if design::checkbox(ui, &mut app.settings.check_for_updates, "Automatically keep ZipShrink up to date").changed() {
                             save = true;
                         }
-                        design::help(ui, "Checks GitHub once a week, downloads a new version in the background and checks its SHA-256, then asks before installing.");
+                        design::help(ui, app.updates.how());
                     });
                     ui.add_space(space::L);
                     design::form_row(ui, "Status:", |ui| {
