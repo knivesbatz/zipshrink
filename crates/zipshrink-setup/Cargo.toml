@@ -15,7 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 eframe = { version = "0.37", features = ["glow"] }
-rfd = "0.17"
+rfd = "0.18"
 flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 raw-window-handle = "0.6"
 
