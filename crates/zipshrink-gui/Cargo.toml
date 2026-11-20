@@ -18,7 +18,7 @@ zipshrink-update.workspace = true
 # Default features (wgpu, accesskit for screen readers, system-font
 # fallback for CJK and other scripts) plus OpenGL as a fallback renderer.
 eframe = { version = "0.37", features = ["glow"] }
-rfd = "0.17"
+rfd = "0.18"
 serde_json.workspace = true
 raw-window-handle = "0.6"
 
